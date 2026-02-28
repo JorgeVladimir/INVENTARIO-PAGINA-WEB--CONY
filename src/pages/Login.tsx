@@ -42,44 +42,44 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-swany-black flex">
+    <div className="min-h-screen bg-china-black flex">
       {/* Left Side - Image */}
       <div className="hidden lg:block w-1/2 relative overflow-hidden">
         <img 
-          src="https://picsum.photos/seed/swany-login/1080/1920?grayscale" 
+          src="https://picsum.photos/seed/china-login/1080/1920?grayscale" 
           className="absolute inset-0 w-full h-full object-cover opacity-60"
           alt="Login Background"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-swany-black to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-china-black to-transparent"></div>
         <div className="absolute bottom-20 left-20 space-y-4">
           <h2 className="text-5xl font-black text-white tracking-tighter uppercase leading-none">Global<br/>Excellence</h2>
-          <p className="text-swany-red font-bold uppercase tracking-[0.4em] text-xs">SinoStock Management</p>
+          <p className="text-china-gold font-bold uppercase tracking-[0.4em] text-xs">Cony Importadora</p>
         </div>
       </div>
 
       {/* Right Side - Form */}
-      <div className="w-full lg:w-1/2 flex flex-col items-center justify-center p-8 bg-white">
-        <div className="w-full max-w-md space-y-12">
+      <div className="w-full lg:w-1/2 flex flex-col items-center justify-center p-6 md:p-8 bg-white">
+        <div className="w-full max-w-md space-y-8 md:space-y-12">
           <div className="text-center space-y-4">
-            <h1 className="text-4xl font-black tracking-[0.3em] text-swany-black">SWANY</h1>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.5em]">Portal Access</p>
+            <h1 className="text-3xl md:text-4xl font-black tracking-[0.3em] text-slate-900">CONY</h1>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.5em]">Portal de Acceso</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-8">
+          <form onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
             {error && (
-              <div className="text-swany-red text-[10px] font-black uppercase tracking-widest text-center border-b border-swany-red pb-2">
+              <div className="text-china-red text-[10px] font-black uppercase tracking-widest text-center border-b border-china-red pb-2">
                 {error}
               </div>
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-4 md:space-y-6">
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Username</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuario</label>
                 <input 
                   type="text" 
                   required
-                  className="premium-input text-sm"
-                  placeholder="Enter your username"
+                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-china-red/10 transition-all"
+                  placeholder="Ingrese su usuario"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                 />
@@ -87,12 +87,12 @@ const Login: React.FC = () => {
 
               <div className="space-y-1">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Password</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contraseña</label>
                 </div>
                 <input 
                   type="password" 
                   required
-                  className="premium-input text-sm"
+                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-china-red/10 transition-all"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -103,17 +103,17 @@ const Login: React.FC = () => {
             <button 
               type="submit"
               disabled={loading}
-              className="w-full swany-btn-primary py-5 text-sm"
+              className="w-full china-btn-primary py-4 md:py-5 text-sm"
             >
-              {loading ? 'Authenticating...' : 'Sign In'}
+              {loading ? 'Autenticando...' : 'Iniciar Sesión'}
             </button>
           </form>
 
-          <div className="pt-12 border-t border-swany-border flex justify-between items-center text-[9px] font-black text-slate-300 uppercase tracking-widest">
-            <span>© Swany America 2024</span>
+          <div className="pt-8 md:pt-12 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-4 text-[9px] font-black text-slate-300 uppercase tracking-widest">
+            <span>© Cony Importadora 2024</span>
             <div className="flex gap-4">
-              <span className="hover:text-swany-black cursor-pointer">Privacy</span>
-              <span className="hover:text-swany-black cursor-pointer">Support</span>
+              <span className="hover:text-china-red cursor-pointer">Privacidad</span>
+              <span className="hover:text-china-red cursor-pointer">Soporte</span>
             </div>
           </div>
         </div>

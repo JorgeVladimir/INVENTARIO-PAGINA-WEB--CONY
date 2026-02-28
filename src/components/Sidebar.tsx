@@ -14,7 +14,12 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -31,15 +36,23 @@ const Sidebar: React.FC = () => {
   const filteredItems = menuItems.filter(item => item.roles.includes(user?.role || ''));
 
   return (
-    <div className="w-64 h-screen bg-china-black text-white flex flex-col fixed left-0 top-0 z-50 shadow-2xl">
-      <div className="p-10 flex flex-col items-center gap-2 border-b border-white/5">
-        <Link to="/" className="flex flex-col items-center gap-3 group">
+    <div className={`w-64 h-screen bg-china-black text-white flex flex-col fixed left-0 top-0 z-50 shadow-2xl transition-transform duration-300 lg:translate-x-0 ${
+      isOpen ? 'translate-x-0' : '-translate-x-full'
+    }`}>
+      <div className="p-10 flex flex-col items-center gap-2 border-b border-white/5 relative">
+        <button 
+          onClick={onClose}
+          className="lg:hidden absolute top-4 right-4 text-white/40 hover:text-white"
+        >
+          <LogOut size={20} className="rotate-180" />
+        </button>
+        <Link to="/" className="flex flex-col items-center gap-3 group" onClick={onClose}>
           <div className="w-14 h-14 bg-china-red rounded-2xl flex items-center justify-center shadow-lg group-hover:rotate-12 transition-transform">
             <Store className="text-white" size={32} />
           </div>
           <div className="text-center">
-            <h1 className="font-black text-2xl tracking-tighter text-white">SINOSTOCK</h1>
-            <p className="text-[9px] text-china-gold font-black uppercase tracking-[0.3em]">Grupo Lina</p>
+            <h1 className="font-black text-2xl tracking-tighter text-white">CONY</h1>
+            <p className="text-[9px] text-china-gold font-black uppercase tracking-[0.3em]">Importadora China</p>
           </div>
         </Link>
       </div>
@@ -49,6 +62,7 @@ const Sidebar: React.FC = () => {
           <Link
             key={item.path}
             to={item.path}
+            onClick={onClose}
             className={`flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group ${
               location.pathname === item.path
                 ? 'bg-china-red text-white shadow-lg shadow-china-red/20'

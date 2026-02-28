@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Menu } from 'lucide-react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { CartProvider } from './CartContext';
 import Sidebar from './components/Sidebar';
@@ -34,14 +35,33 @@ const PublicLayout = () => (
 
 const AdminLayout = () => {
   const { isAuthenticated } = useAuth();
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+
   if (!isAuthenticated) return <Navigate to="/login" />;
 
   return (
-    <div className="flex bg-slate-50 min-h-screen">
-      <Sidebar />
-      <main className="flex-1 ml-64 min-h-screen">
+    <div className="flex bg-slate-50 min-h-screen relative">
+      {/* Mobile Sidebar Toggle */}
+      <button 
+        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        className="lg:hidden fixed top-4 left-4 z-[60] p-3 bg-china-black text-white rounded-xl shadow-2xl"
+      >
+        <Menu size={24} />
+      </button>
+
+      <Sidebar isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
+      
+      <main className="flex-1 lg:ml-64 min-h-screen w-full overflow-x-hidden">
         <Outlet />
       </main>
+
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="lg:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 };

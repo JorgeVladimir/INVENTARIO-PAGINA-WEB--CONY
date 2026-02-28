@@ -50,18 +50,18 @@ const Catalog: React.FC = () => {
   return (
     <div className="min-h-screen bg-white">
       {/* Header */}
-      <div className="bg-china-red text-white py-20 px-8">
+      <div className="bg-china-red text-white py-12 md:py-20 px-6 md:px-8">
         <div className="max-w-7xl mx-auto space-y-4">
-          <h1 className="text-6xl font-black tracking-tighter uppercase">Catálogo Global</h1>
-          <p className="text-white/60 font-medium tracking-widest uppercase text-sm">Explora miles de productos importados con garantía local</p>
+          <h1 className="text-4xl md:text-6xl font-black tracking-tighter uppercase">Catálogo Global</h1>
+          <p className="text-white/60 font-medium tracking-widest uppercase text-[10px] md:text-sm">Explora miles de productos importados con garantía local</p>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-8 -mt-12 pb-20">
-        <div className="flex flex-col lg:flex-row gap-12">
+      <div className="max-w-7xl mx-auto px-6 md:px-8 -mt-8 md:-mt-12 pb-12 md:pb-20">
+        <div className="flex flex-col lg:flex-row gap-8 md:gap-12">
           {/* Sidebar Filters */}
-          <aside className="w-full lg:w-72 space-y-10">
-            <div className="bg-white border border-slate-100 p-8 rounded-[40px] shadow-xl space-y-10">
+          <aside className="w-full lg:w-72 space-y-8 md:space-y-10">
+            <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-[32px] md:rounded-[40px] shadow-xl space-y-8 md:space-y-10">
               {/* Search */}
               <div className="space-y-4">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Búsqueda</label>
@@ -80,10 +80,10 @@ const Catalog: React.FC = () => {
               {/* Categories */}
               <div className="space-y-4">
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Categorías</label>
-                <div className="space-y-2">
+                <div className="flex flex-wrap lg:flex-col gap-2">
                   <button 
                     onClick={() => setSelectedCategory('all')}
-                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
+                    className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedCategory === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
                   >
                     Todas
                   </button>
@@ -91,7 +91,7 @@ const Catalog: React.FC = () => {
                     <button 
                       key={cat.id}
                       onClick={() => setSelectedCategory(cat.id.toString())}
-                      className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition-all ${selectedCategory === cat.id.toString() ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
+                      className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedCategory === cat.id.toString() ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
                     >
                       {cat.name}
                     </button>
@@ -118,24 +118,24 @@ const Catalog: React.FC = () => {
             </div>
 
             {/* Promo Card */}
-            <div className="bg-china-gold rounded-[40px] p-8 text-china-red space-y-4">
-              <h4 className="font-black text-xl leading-tight uppercase">Envío Gratis</h4>
-              <p className="text-sm font-bold opacity-80">En compras mayores a $150. Solo este mes.</p>
-              <button className="w-full bg-china-red text-white py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg">Saber Más</button>
+            <div className="bg-china-gold rounded-[32px] md:rounded-[40px] p-6 md:p-8 text-china-red space-y-4">
+              <h4 className="font-black text-lg md:text-xl leading-tight uppercase">Envío Gratis</h4>
+              <p className="text-xs md:text-sm font-bold opacity-80">En compras mayores a $150. Solo este mes.</p>
+              <button className="w-full bg-china-red text-white py-3 rounded-2xl font-black text-[10px] md:text-xs uppercase tracking-widest shadow-lg">Saber Más</button>
             </div>
           </aside>
 
           {/* Main Content */}
-          <main className="flex-1 space-y-8">
-            <div className="flex justify-between items-center bg-slate-50 p-4 rounded-3xl">
-              <p className="text-sm font-bold text-slate-500 ml-4">Mostrando <span className="text-slate-900">{filteredProducts.length}</span> productos</p>
+          <main className="flex-1 space-y-6 md:space-y-8">
+            <div className="flex justify-between items-center bg-slate-50 p-3 md:p-4 rounded-2xl md:rounded-3xl">
+              <p className="text-xs md:text-sm font-bold text-slate-500 ml-2 md:ml-4">Mostrando <span className="text-slate-900">{filteredProducts.length}</span> productos</p>
               <div className="flex gap-2">
-                <button className="p-2 bg-white rounded-xl shadow-sm text-china-red"><LayoutGrid size={20} /></button>
-                <button className="p-2 text-slate-400 hover:text-slate-600"><List size={20} /></button>
+                <button className="p-2 bg-white rounded-xl shadow-sm text-china-red"><LayoutGrid size={18} md:size={20} /></button>
+                <button className="p-2 text-slate-400 hover:text-slate-600"><List size={18} md:size={20} /></button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
               {filteredProducts.map((product, idx) => (
                 <motion.div
                   key={product.id}
@@ -155,25 +155,25 @@ const Catalog: React.FC = () => {
                       </div>
                     )}
                   </div>
-                  <div className="p-8 flex-1 flex flex-col gap-6">
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{product.internal_code}</p>
-                      <h3 className="font-black text-xl text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors">{product.name}</h3>
+                  <div className="p-6 md:p-8 flex-1 flex flex-col gap-4 md:gap-6">
+                    <div className="space-y-1 md:space-y-2">
+                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">{product.internal_code}</p>
+                      <h3 className="font-black text-lg md:text-xl text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-2">{product.name}</h3>
                     </div>
                     
                     <div className="mt-auto flex justify-between items-center">
                       <div className="space-y-1">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Precio</p>
-                        <span className="text-3xl font-black text-slate-900">${product.price.toFixed(2)}</span>
+                        <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Precio</p>
+                        <span className="text-2xl md:text-3xl font-black text-slate-900">${product.price.toFixed(2)}</span>
                       </div>
                       <button 
                         onClick={() => handleAddToCart(product)}
                         disabled={addedId === product.id}
-                        className={`w-14 h-14 rounded-[20px] flex items-center justify-center transition-all shadow-xl active:scale-90 ${
+                        className={`w-12 h-12 md:w-14 md:h-14 rounded-[16px] md:rounded-[20px] flex items-center justify-center transition-all shadow-xl active:scale-90 ${
                           addedId === product.id ? 'bg-emerald-500 text-white' : 'bg-china-red text-white hover:bg-slate-900'
                         }`}
                       >
-                        {addedId === product.id ? <Check size={24} /> : <Plus size={24} />}
+                        {addedId === product.id ? <Check size={20} md:size={24} /> : <Plus size={20} md:size={24} />}
                       </button>
                     </div>
                   </div>
@@ -182,17 +182,17 @@ const Catalog: React.FC = () => {
             </div>
 
             {filteredProducts.length === 0 && (
-              <div className="py-40 text-center space-y-6 bg-slate-50 rounded-[60px]">
-                <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto shadow-xl">
-                  <Search size={48} className="text-slate-200" />
+              <div className="py-20 md:py-40 text-center space-y-6 bg-slate-50 rounded-[32px] md:rounded-[60px] px-6">
+                <div className="w-20 h-20 md:w-24 md:h-24 bg-white rounded-full flex items-center justify-center mx-auto shadow-xl">
+                  <Search size={40} md:size={48} className="text-slate-200" />
                 </div>
                 <div className="space-y-2">
-                  <h2 className="text-3xl font-black uppercase tracking-tighter">Sin resultados</h2>
-                  <p className="text-slate-400 font-medium">No encontramos productos que coincidan con tu búsqueda.</p>
+                  <h2 className="text-2xl md:text-3xl font-black uppercase tracking-tighter">Sin resultados</h2>
+                  <p className="text-sm md:text-base text-slate-400 font-medium">No encontramos productos que coincidan con tu búsqueda.</p>
                 </div>
                 <button 
                   onClick={() => { setSearch(''); setSelectedCategory('all'); setPriceRange(1000); }}
-                  className="bg-china-red text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs shadow-lg hover:bg-slate-900 transition-all"
+                  className="bg-china-red text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-lg hover:bg-slate-900 transition-all"
                 >
                   Limpiar Filtros
                 </button>

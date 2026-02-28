@@ -106,7 +106,20 @@ if (userCount.count === 0) {
   db.prepare("INSERT INTO warehouses (name) VALUES (?)").run("Bodega Norte - UIO");
 
   db.prepare("INSERT INTO containers (code, arrival_date, status) VALUES (?, ?, ?)").run("CONT-CHN-2024-001", "2024-02-15", "recibido");
+  db.prepare("INSERT INTO containers (code, arrival_date, status) VALUES (?, ?, ?)").run("2564", "2024-03-01", "en_camino");
   
+  db.prepare(`INSERT INTO products (internal_code, name, category_id, price, cost, stock, container_id, warehouse_id, image_url) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "6036625", "CORTINA JASPIADA FLOREADA 140*230 CM", 2, 17.50, 5.54, 190, 2, 1, "https://picsum.photos/seed/curtain/800/800"
+  );
+  db.prepare(`INSERT INTO products (internal_code, name, category_id, price, cost, stock, container_id, warehouse_id, image_url) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "6036632", "MOCHILA SPORT BAG 45*30*15 CM", 4, 7.75, 2.52, 480, 2, 1, "https://picsum.photos/seed/backpack/800/800"
+  );
+  db.prepare(`INSERT INTO products (internal_code, name, category_id, price, cost, stock, container_id, warehouse_id, image_url) 
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    "6036651", "BATIDOR ELECTRICO DE CAPUCHINO", 1, 3.80, 1.13, 864, 2, 1, "https://picsum.photos/seed/mixer/800/800"
+  );
   db.prepare(`INSERT INTO products (internal_code, name, category_id, price, cost, stock, container_id, warehouse_id, image_url) 
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     "PROD-001", "Smartphone Dragon X1", 1, 299.99, 150.00, 45, 1, 1, "https://picsum.photos/seed/phone/800/800"

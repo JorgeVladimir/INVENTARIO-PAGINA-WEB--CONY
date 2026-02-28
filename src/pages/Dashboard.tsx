@@ -37,33 +37,33 @@ const Dashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section - China Premium Style */}
-      <div className="relative h-[50vh] bg-china-black overflow-hidden flex items-center">
+      <div className="relative h-[40vh] md:h-[50vh] bg-china-black overflow-hidden flex items-center">
         <img 
           src="https://picsum.photos/seed/shanghai/1920/1080?blur=4" 
           className="absolute inset-0 w-full h-full object-cover opacity-30"
           alt="Hero Background"
         />
         <div className="absolute inset-0 bg-gradient-to-r from-china-red/40 to-transparent"></div>
-        <div className="relative z-10 max-w-7xl mx-auto px-12 w-full">
+        <div className="relative z-10 max-w-7xl mx-auto px-6 md:px-12 w-full">
           <motion.div
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8 }}
-            className="max-w-2xl space-y-6"
+            className="max-w-2xl space-y-4 md:space-y-6 pt-12 lg:pt-0"
           >
-            <div className="inline-flex items-center gap-2 bg-china-gold text-china-red px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
+            <div className="inline-flex items-center gap-2 bg-china-gold text-china-red px-4 py-1.5 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
               <TrendingUp size={14} />
               Crecimiento del 24% este mes
             </div>
-            <h1 className="text-7xl font-black text-white tracking-tighter leading-none uppercase">Panel de<br/><span className="text-china-gold">Control Global</span></h1>
-            <p className="text-lg text-white/70 font-medium tracking-widest uppercase">SinoStock Ecuador: Gestión Inteligente de Importaciones</p>
+            <h1 className="text-4xl md:text-7xl font-black text-white tracking-tighter leading-none uppercase">Panel de<br/><span className="text-china-gold">Control Cony</span></h1>
+            <p className="text-sm md:text-lg text-white/70 font-medium tracking-widest uppercase">Cony Importadora: Gestión Inteligente de Importaciones</p>
           </motion.div>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-12 py-20 space-y-24">
+      <div className="max-w-7xl mx-auto px-6 md:px-12 py-12 md:py-20 space-y-12 md:space-y-24">
         {/* Stats Section */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           {[
             { title: 'Inventario Total', value: stats.totalStock, icon: Package, color: 'text-china-red' },
             { title: 'Stock Crítico', value: stats.lowStock, icon: AlertTriangle, color: 'text-amber-500' },
@@ -84,13 +84,13 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-16">
-          <div className="lg:col-span-2 space-y-10">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 md:gap-16">
+          <div className="lg:col-span-2 space-y-8 md:space-y-10">
             <div className="flex justify-between items-end border-b border-slate-100 pb-6">
-              <h2 className="text-3xl font-black tracking-tighter uppercase">Análisis Operativo</h2>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Últimos 7 Días</span>
+              <h2 className="text-2xl md:text-3xl font-black tracking-tighter uppercase">Análisis Operativo</h2>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Últimos 7 Días</span>
             </div>
-            <div className="h-[450px] w-full bg-slate-50/50 rounded-[48px] p-8">
+            <div className="h-[300px] md:h-[450px] w-full bg-slate-50/50 rounded-[32px] md:rounded-[48px] p-4 md:p-8">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={[
                   { name: 'Lun', v: 400 }, { name: 'Mar', v: 300 }, { name: 'Mie', v: 600 },
@@ -128,6 +128,15 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
             
+            <div className="bg-china-red p-10 rounded-[48px] shadow-2xl shadow-china-red/20 space-y-6 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-2xl group-hover:scale-150 transition-transform duration-700"></div>
+              <h4 className="text-2xl font-black text-white uppercase tracking-tighter relative z-10">Importación Masiva</h4>
+              <p className="text-xs font-bold text-white/70 leading-relaxed uppercase tracking-widest relative z-10">Carga tu inventario completo desde una matriz de Excel en segundos.</p>
+              <Link to="/dashboard/importar" className="block w-full bg-white text-china-red font-black uppercase tracking-widest text-center py-4 rounded-2xl shadow-xl hover:scale-105 transition-transform relative z-10">
+                Subir Excel
+              </Link>
+            </div>
+
             <div className="bg-china-gold/10 p-10 rounded-[48px] border border-china-gold/20 space-y-6">
               <h4 className="text-xl font-black text-china-red uppercase tracking-tighter">Reporte Mensual</h4>
               <p className="text-xs font-bold text-china-red/60 leading-relaxed uppercase tracking-widest">Descarga el resumen detallado de operaciones y stock por contenedor.</p>
