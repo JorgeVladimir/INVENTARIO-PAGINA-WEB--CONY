@@ -5,8 +5,8 @@ import BrandLogo from './BrandLogo';
 
 const PublicFooter: React.FC = () => {
   return (
-    <footer className="bg-slate-900 text-white pt-20 pb-10">
-      <div className="max-w-7xl mx-auto px-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-16 mb-20">
+    <footer className="bg-slate-900 text-white pt-12 md:pt-20 pb-10">
+      <div className="max-w-7xl mx-auto px-6 md:px-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-12 md:gap-16 mb-12 md:mb-20">
         {/* Brand */}
         <div className="space-y-8">
           <BrandLogo to="/" textColor="text-white" subTextColor="text-china-gold" />
@@ -23,33 +23,33 @@ const PublicFooter: React.FC = () => {
         </div>
 
         {/* Links */}
-        <div className="space-y-8">
-          <h4 className="text-lg font-black uppercase tracking-widest text-china-gold">Navegación</h4>
-          <ul className="space-y-4">
+        <div className="space-y-6 md:space-y-8">
+          <h4 className="text-base md:text-lg font-black uppercase tracking-widest text-china-gold">Navegación</h4>
+          <ul className="space-y-3 md:space-y-4">
             {['Inicio', 'Productos', 'Ofertas', 'Sobre Nosotros', 'Contacto'].map(link => (
               <li key={link}>
-                <Link to="/" className="text-slate-400 hover:text-white transition-colors font-bold uppercase text-xs tracking-widest">{link}</Link>
+                <Link to="/" className="text-slate-400 hover:text-white transition-colors font-bold uppercase text-[10px] md:text-xs tracking-widest">{link}</Link>
               </li>
             ))}
           </ul>
         </div>
 
         {/* Categories */}
-        <div className="space-y-8">
-          <h4 className="text-lg font-black uppercase tracking-widest text-china-gold">Categorías</h4>
-          <ul className="space-y-4">
+        <div className="space-y-6 md:space-y-8">
+          <h4 className="text-base md:text-lg font-black uppercase tracking-widest text-china-gold">Categorías</h4>
+          <ul className="space-y-3 md:space-y-4">
             {['Electrónica', 'Hogar', 'Juguetes', 'Moda', 'Herramientas'].map(cat => (
               <li key={cat}>
-                <Link to="/productos" className="text-slate-400 hover:text-white transition-colors font-bold uppercase text-xs tracking-widest">{cat}</Link>
+                <Link to="/productos" className="text-slate-400 hover:text-white transition-colors font-bold uppercase text-[10px] md:text-xs tracking-widest">{cat}</Link>
               </li>
             ))}
           </ul>
         </div>
 
         {/* Contact */}
-        <div className="space-y-8">
-          <h4 className="text-lg font-black uppercase tracking-widest text-china-gold">Contacto</h4>
-          <ul className="space-y-6">
+        <div className="space-y-6 md:space-y-8">
+          <h4 className="text-base md:text-lg font-black uppercase tracking-widest text-china-gold">Contacto</h4>
+          <ul className="space-y-4 md:space-y-6">
             <li className="flex items-start gap-4">
               <MapPin className="text-china-red shrink-0" size={20} />
               <span className="text-slate-400 text-sm font-medium">Av. 10 de Agosto y Colon, Quito, Ecuador</span>
@@ -70,7 +70,7 @@ const PublicFooter: React.FC = () => {
         <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">
           © 2026 IMPORTADORA LINA. TODOS LOS DERECHOS RESERVADOS.
         </p>
-        <div className="flex gap-8 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+        <div className="flex gap-6 md:gap-8 text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest">
           <span className="hover:text-white cursor-pointer">Privacidad</span>
           <span className="hover:text-white cursor-pointer">Términos</span>
           <span className="hover:text-white cursor-pointer">Cookies</span>

@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Menu } from 'lucide-react';
 import { AuthProvider, useAuth } from './AuthContext';
 import { CartProvider } from './CartContext';
 import Sidebar from './components/Sidebar';
@@ -34,6 +35,8 @@ const PublicLayout = () => (
 
 const AdminLayout = () => {
   const { isAuthenticated } = useAuth();
+  const [isSidebarOpen, setIsSidebarOpen] = React.useState(false);
+
   if (!isAuthenticated) return <Navigate to="/login" />;
 
   return (
@@ -42,6 +45,14 @@ const AdminLayout = () => {
       <main className="flex-1 ml-64 min-h-screen">
         <Outlet />
       </main>
+
+      {/* Mobile Overlay */}
+      {isSidebarOpen && (
+        <div 
+          className="lg:hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-40"
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 };

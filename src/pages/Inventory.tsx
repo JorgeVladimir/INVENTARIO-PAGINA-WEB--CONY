@@ -38,41 +38,41 @@ const Inventory: React.FC = () => {
   return (
     <div className="min-h-screen bg-white">
       {/* Header Section */}
-      <div className="bg-china-red text-white py-24 px-12">
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="inline-flex items-center gap-2 bg-china-gold text-china-red px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
+      <div className="bg-china-red text-white py-16 md:py-24 px-6 md:px-12">
+        <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
+          <div className="inline-flex items-center gap-2 bg-china-gold text-china-red px-4 py-1.5 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
             <Box size={14} />
             Gestión de Inventario Global
           </div>
-          <h1 className="text-6xl font-black tracking-tighter uppercase leading-none">Catálogo de<br/>Importaciones</h1>
-          <p className="text-white/60 font-medium tracking-widest uppercase text-sm max-w-xl">Control total de stock, contenedores y logística de arribo para SinoStock Ecuador.</p>
+          <h1 className="text-4xl md:text-6xl font-black tracking-tighter uppercase leading-none">Catálogo de<br/>Importaciones</h1>
+          <p className="text-white/60 font-medium tracking-widest uppercase text-xs md:text-sm max-w-xl">Control total de stock, contenedores y logística de arribo para Cony Importadora.</p>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-12 -mt-16">
+      <div className="max-w-7xl mx-auto px-6 md:px-12 -mt-12 md:-mt-16">
         {/* Filters Bar */}
-        <div className="bg-white rounded-[40px] p-10 flex flex-wrap gap-10 items-end shadow-2xl border border-slate-100">
-          <div className="flex-1 min-w-[350px] space-y-3">
-            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Búsqueda Inteligente</label>
+        <div className="bg-white rounded-[32px] md:rounded-[40px] p-6 md:p-10 flex flex-col lg:flex-row gap-6 md:gap-10 items-stretch lg:items-end shadow-2xl border border-slate-100">
+          <div className="flex-1 space-y-3">
+            <label className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Búsqueda Inteligente</label>
             <div className="relative group">
               <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-china-red transition-colors" size={20} />
               <input 
                 type="text" 
-                placeholder="Nombre, Código SKU o Categoría..." 
-                className="w-full pl-14 pr-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-china-red/5 font-medium transition-all"
+                placeholder="Nombre, Código SKU..." 
+                className="w-full pl-14 pr-6 py-4 bg-slate-50 border-none rounded-2xl focus:ring-4 focus:ring-china-red/5 font-medium transition-all text-sm"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
           </div>
           
-          <div className="flex gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
             <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Categoría</label>
+              <label className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Categoría</label>
               <div className="relative">
                 <Filter className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                 <select 
-                  className="bg-slate-50 border-none rounded-2xl pl-12 pr-10 py-4 font-black uppercase text-[10px] tracking-widest text-slate-600 focus:ring-4 focus:ring-china-red/5 appearance-none cursor-pointer"
+                  className="w-full bg-slate-50 border-none rounded-2xl pl-12 pr-10 py-4 font-black uppercase text-[9px] md:text-[10px] tracking-widest text-slate-600 focus:ring-4 focus:ring-china-red/5 appearance-none cursor-pointer"
                   value={selectedCategory}
                   onChange={(e) => setSelectedCategory(e.target.value)}
                 >
@@ -83,11 +83,11 @@ const Inventory: React.FC = () => {
             </div>
 
             <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Logística</label>
+              <label className="text-[9px] md:text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Logística</label>
               <div className="relative">
                 <Package className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                 <select 
-                  className="bg-slate-50 border-none rounded-2xl pl-12 pr-10 py-4 font-black uppercase text-[10px] tracking-widest text-slate-600 focus:ring-4 focus:ring-china-red/5 appearance-none cursor-pointer"
+                  className="w-full bg-slate-50 border-none rounded-2xl pl-12 pr-10 py-4 font-black uppercase text-[9px] md:text-[10px] tracking-widest text-slate-600 focus:ring-4 focus:ring-china-red/5 appearance-none cursor-pointer"
                   value={selectedContainer}
                   onChange={(e) => setSelectedContainer(e.target.value)}
                 >
@@ -98,14 +98,14 @@ const Inventory: React.FC = () => {
             </div>
           </div>
 
-          <button className="china-btn-primary h-[58px] flex items-center gap-3">
+          <button className="china-btn-primary h-[58px] flex items-center justify-center gap-3">
             <Plus size={20} />
-            Nuevo Producto
+            Nuevo
           </button>
         </div>
 
         {/* Product Grid */}
-        <div className="py-24 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-10 gap-y-20">
+        <div className="py-12 md:py-24 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 md:gap-x-10 gap-y-12 md:gap-y-20">
           {filteredProducts.map((product, idx) => (
             <motion.div
               key={product.id}

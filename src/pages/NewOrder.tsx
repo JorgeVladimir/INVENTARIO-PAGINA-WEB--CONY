@@ -142,7 +142,7 @@ const NewOrder: React.FC = () => {
     doc.rect(0, 0, 210, 40, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(24);
-    doc.text('SINOSTOCK - COMPROBANTE', 105, 20, { align: 'center' });
+    doc.text('CONY IMPORTADORA - COMPROBANTE', 105, 20, { align: 'center' });
     
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(12);
@@ -175,47 +175,47 @@ const NewOrder: React.FC = () => {
   };
 
   return (
-    <div className="p-8 flex gap-8 h-[calc(100vh-64px)] overflow-hidden">
+    <div className="p-4 md:p-8 flex flex-col lg:flex-row gap-6 md:gap-8 h-full lg:h-[calc(100vh-64px)] overflow-y-auto lg:overflow-hidden">
       {/* Product Selection */}
-      <div className="flex-1 flex flex-col gap-8 overflow-hidden">
+      <div className="flex-1 flex flex-col gap-6 md:gap-8 overflow-hidden">
         <header className="space-y-2">
-          <h1 className="text-4xl font-black text-china-red tracking-tighter uppercase">Nueva Orden</h1>
-          <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Gestión de pedidos internos y sucursales</p>
+          <h1 className="text-3xl md:text-4xl font-black text-china-red tracking-tighter uppercase">Nueva Orden</h1>
+          <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px] md:text-xs">Gestión de pedidos internos y sucursales</p>
         </header>
 
         <div className="relative group">
           <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-china-red transition-colors" size={20} />
           <input 
             type="text" 
-            placeholder="Buscar por nombre, código o categoría..." 
-            className="w-full pl-14 pr-6 py-5 bg-white border border-slate-100 rounded-[32px] shadow-sm focus:ring-4 focus:ring-china-red/5 focus:border-china-red/20 font-medium transition-all"
+            placeholder="Buscar por nombre, código..." 
+            className="w-full pl-14 pr-6 py-4 md:py-5 bg-white border border-slate-100 rounded-[24px] md:rounded-[32px] shadow-sm focus:ring-4 focus:ring-china-red/5 focus:border-china-red/20 font-medium transition-all text-sm"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-4 space-y-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto lg:pr-4 space-y-4 custom-scrollbar">
           {filteredProducts.map(product => (
-            <div key={product.id} className="bg-white p-6 rounded-[32px] shadow-sm border border-slate-100 flex items-center gap-6 hover:border-china-red/30 hover:shadow-xl transition-all group">
-              <div className="w-20 h-20 rounded-2xl overflow-hidden bg-slate-50">
+            <div key={product.id} className="bg-white p-4 md:p-6 rounded-[24px] md:rounded-[32px] shadow-sm border border-slate-100 flex items-center gap-4 md:gap-6 hover:border-china-red/30 hover:shadow-xl transition-all group">
+              <div className="w-16 h-16 md:w-20 md:h-20 rounded-xl md:rounded-2xl overflow-hidden bg-slate-50 shrink-0">
                 <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
               </div>
-              <div className="flex-1">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{product.internal_code}</p>
-                <h3 className="font-black text-slate-900 uppercase tracking-tight">{product.name}</h3>
-                <p className="text-lg font-black text-china-red mt-1">${product.price.toFixed(2)}</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 truncate">{product.internal_code}</p>
+                <h3 className="font-black text-slate-900 uppercase tracking-tight text-sm md:text-base truncate">{product.name}</h3>
+                <p className="text-base md:text-lg font-black text-china-red mt-1">${product.price.toFixed(2)}</p>
               </div>
-              <div className="text-right space-y-3">
+              <div className="text-right space-y-2 md:space-y-3">
                 <div className="flex flex-col items-end">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stock</p>
-                  <p className={`font-black ${product.stock < 10 ? 'text-china-red' : 'text-slate-900'}`}>{product.stock}</p>
+                  <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Stock</p>
+                  <p className={`font-black text-sm md:text-base ${product.stock < 10 ? 'text-china-red' : 'text-slate-900'}`}>{product.stock}</p>
                 </div>
                 <button 
                   onClick={() => addToCart(product, 1)}
                   disabled={product.stock <= 0}
-                  className="bg-china-red text-white w-12 h-12 rounded-2xl shadow-lg hover:bg-china-black disabled:bg-slate-200 transition-all active:scale-90 flex items-center justify-center"
+                  className="bg-china-red text-white w-10 h-10 md:w-12 md:h-12 rounded-xl md:rounded-2xl shadow-lg hover:bg-china-black disabled:bg-slate-200 transition-all active:scale-90 flex items-center justify-center"
                 >
-                  <Plus size={24} />
+                  <Plus size={20} md:size={24} />
                 </button>
               </div>
             </div>
@@ -224,19 +224,19 @@ const NewOrder: React.FC = () => {
       </div>
 
       {/* Checkout Sidebar */}
-      <div className="w-[400px] bg-white rounded-[40px] shadow-2xl border border-slate-100 flex flex-col overflow-hidden">
-        <div className="p-8 bg-china-red text-white space-y-2">
+      <div className="w-full lg:w-[400px] bg-white rounded-[32px] md:rounded-[40px] shadow-2xl border border-slate-100 flex flex-col overflow-hidden shrink-0">
+        <div className="p-6 md:p-8 bg-china-red text-white space-y-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <ShoppingCart size={28} />
-              <h2 className="text-2xl font-black uppercase tracking-tighter">Checkout</h2>
+              <ShoppingCart size={24} md:size={28} />
+              <h2 className="text-xl md:text-2xl font-black uppercase tracking-tighter">Checkout</h2>
             </div>
-            <span className="bg-white/20 px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">{items.length} Items</span>
+            <span className="bg-white/20 px-4 py-1 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-widest">{items.length} Items</span>
           </div>
-          <p className="text-white/60 text-[10px] font-bold uppercase tracking-widest">Resumen de transacción segura</p>
+          <p className="text-white/60 text-[9px] md:text-[10px] font-bold uppercase tracking-widest">Resumen de transacción segura</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 md:space-y-8 custom-scrollbar">
           {step === 'cart' && (
             <div className="space-y-6">
               <h3 className="font-black text-slate-400 uppercase text-[10px] tracking-[0.2em]">Productos Seleccionados</h3>
@@ -351,15 +351,15 @@ const NewOrder: React.FC = () => {
             <p className="text-china-red text-[10px] font-black uppercase tracking-widest">{errorMessage}</p>
           )}
           <div className="flex justify-between items-end">
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Total Final</span>
-            <span className="text-4xl font-black text-china-red leading-none">${(step === 'payment' ? finalTotal : total).toFixed(2)}</span>
+            <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Total Final</span>
+            <span className="text-3xl md:text-4xl font-black text-china-red leading-none">${(step === 'payment' ? finalTotal : total).toFixed(2)}</span>
           </div>
           
-          <div className="flex gap-4">
+          <div className="flex gap-3 md:gap-4">
             {step !== 'cart' && (
               <button 
                 onClick={() => setStep(step === 'shipping' ? 'cart' : 'shipping')}
-                className="px-6 py-4 rounded-2xl font-black text-slate-400 hover:bg-slate-200 transition-colors uppercase text-[10px] tracking-widest"
+                className="px-4 md:px-6 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-slate-400 hover:bg-slate-200 transition-colors uppercase text-[9px] md:text-[10px] tracking-widest"
               >
                 Atrás
               </button>
@@ -369,10 +369,10 @@ const NewOrder: React.FC = () => {
               <button 
                 onClick={() => setStep('shipping')}
                 disabled={items.length === 0}
-                className="flex-1 china-btn-primary flex items-center justify-center gap-3"
+                className="flex-1 china-btn-primary flex items-center justify-center gap-2 md:gap-3 py-4 md:py-5 text-[10px] md:text-xs"
               >
                 Continuar al Envío
-                <ChevronRight size={20} />
+                <ChevronRight size={18} md:size={20} />
               </button>
             )}
 
@@ -380,9 +380,9 @@ const NewOrder: React.FC = () => {
               <button 
                 onClick={handleGetQuote}
                 disabled={!shippingData.address || loading}
-                className="flex-1 china-btn-primary flex items-center justify-center gap-3"
+                className="flex-1 china-btn-primary flex items-center justify-center gap-2 md:gap-3 py-4 md:py-5 text-[10px] md:text-xs"
               >
-                {loading ? <Loader2 className="animate-spin" /> : <Truck size={20} />}
+                {loading ? <Loader2 className="animate-spin" /> : <Truck size={18} md:size={20} />}
                 Cotizar Envío
               </button>
             )}
@@ -391,9 +391,9 @@ const NewOrder: React.FC = () => {
               <button 
                 onClick={handleCheckout}
                 disabled={loading}
-                className="flex-1 china-btn-gold flex items-center justify-center gap-3"
+                className="flex-1 china-btn-gold flex items-center justify-center gap-2 md:gap-3 py-4 md:py-5 text-[10px] md:text-xs"
               >
-                {loading ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={20} />}
+                {loading ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={18} md:size={20} />}
                 Finalizar Orden
               </button>
             )}
@@ -413,37 +413,37 @@ const NewOrder: React.FC = () => {
             <motion.div 
               initial={{ scale: 0.9, opacity: 0, y: 50 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              className="relative bg-white w-full max-w-lg rounded-[60px] p-12 text-center shadow-2xl overflow-hidden"
+              className="relative bg-white w-full max-w-lg rounded-[40px] md:rounded-[60px] p-8 md:p-12 text-center shadow-2xl overflow-hidden"
             >
               <div className="absolute top-0 left-0 w-full h-2 bg-china-red"></div>
-              <div className="w-24 h-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-8 shadow-inner">
-                <CheckCircle2 size={56} />
+              <div className="w-20 h-20 md:w-24 md:h-24 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 md:mb-8 shadow-inner">
+                <CheckCircle2 size={40} md:size={56} />
               </div>
-              <h2 className="text-4xl font-black uppercase tracking-tighter mb-4">¡Orden Generada!</h2>
-              <p className="text-slate-500 font-medium mb-10">La transacción ha sido procesada y la guía de Urbano está lista.</p>
+              <h2 className="text-3xl md:text-4xl font-black uppercase tracking-tighter mb-4">¡Orden Generada!</h2>
+              <p className="text-slate-500 text-sm md:text-base font-medium mb-8 md:mb-10">La transacción ha sido procesada y la guía de Urbano está lista.</p>
               
-              <div className="bg-slate-50 p-8 rounded-[32px] text-left space-y-4 mb-10">
-                <div className="flex justify-between text-sm font-bold uppercase tracking-widest">
+              <div className="bg-slate-50 p-6 md:p-8 rounded-[24px] md:rounded-[32px] text-left space-y-4 mb-8 md:mb-10">
+                <div className="flex justify-between text-xs md:text-sm font-bold uppercase tracking-widest">
                   <span className="text-slate-400">Orden #:</span>
                   <span className="text-slate-900">{orderResult?.orderNumber}</span>
                 </div>
-                <div className="flex justify-between text-sm font-bold uppercase tracking-widest">
+                <div className="flex justify-between text-xs md:text-sm font-bold uppercase tracking-widest">
                   <span className="text-slate-400">Guía Urbano:</span>
                   <span className="text-china-red">{orderResult?.guide}</span>
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <button 
                   onClick={generatePDF}
-                  className="flex items-center justify-center gap-3 bg-slate-900 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl hover:bg-china-red transition-all"
+                  className="flex items-center justify-center gap-3 bg-slate-900 text-white py-4 md:py-5 rounded-2xl font-black uppercase tracking-widest text-[9px] md:text-[10px] shadow-xl hover:bg-china-red transition-all"
                 >
-                  <FileText size={20} />
+                  <FileText size={18} md:size={20} />
                   Factura PDF
                 </button>
                 <button 
                   onClick={() => { setStep('cart'); setOrderResult(null); }}
-                  className="china-btn-primary py-5 text-[10px]"
+                  className="china-btn-primary py-4 md:py-5 text-[9px] md:text-[10px]"
                 >
                   Nueva Orden
                 </button>

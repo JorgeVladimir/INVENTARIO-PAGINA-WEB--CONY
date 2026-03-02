@@ -49,7 +49,7 @@ const Dashboard: React.FC = () => {
             initial={{ opacity: 0, x: -30 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.8 }}
-            className="max-w-2xl space-y-6"
+            className="max-w-2xl space-y-4 md:space-y-6 pt-12 lg:pt-0"
           >
             <div className="inline-flex items-center gap-2 bg-white text-china-red px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
               <TrendingUp size={14} />
@@ -61,9 +61,9 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-12 py-20 space-y-24">
+      <div className="max-w-7xl mx-auto px-6 md:px-12 py-12 md:py-20 space-y-12 md:space-y-24">
         {/* Stats Section */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 md:gap-8">
           {[
             { title: 'Inventario Total', value: stats.totalStock, icon: Package, color: 'text-china-red' },
             { title: 'Stock Crítico', value: stats.lowStock, icon: AlertTriangle, color: 'text-amber-500' },
@@ -84,13 +84,13 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-16">
-          <div className="lg:col-span-2 space-y-10">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12 md:gap-16">
+          <div className="lg:col-span-2 space-y-8 md:space-y-10">
             <div className="flex justify-between items-end border-b border-slate-100 pb-6">
-              <h2 className="text-3xl font-black tracking-tighter uppercase">Análisis Operativo</h2>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Últimos 7 Días</span>
+              <h2 className="text-2xl md:text-3xl font-black tracking-tighter uppercase">Análisis Operativo</h2>
+              <span className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Últimos 7 Días</span>
             </div>
-            <div className="h-[450px] w-full bg-slate-50/50 rounded-[48px] p-8">
+            <div className="h-[300px] md:h-[450px] w-full bg-slate-50/50 rounded-[32px] md:rounded-[48px] p-4 md:p-8">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={[
                   { name: 'Lun', v: 400 }, { name: 'Mar', v: 300 }, { name: 'Mie', v: 600 },

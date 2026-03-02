@@ -21,16 +21,16 @@ const PublicHeader: React.FC = () => {
   return (
     <header className="sticky top-0 z-[100] bg-white border-b border-slate-100 shadow-sm">
       {/* Top Bar */}
-      <div className="bg-china-red text-white py-2 px-8 text-[10px] font-black uppercase tracking-[0.2em] flex justify-between items-center">
-        <span>Importaciones Directas desde China a Ecuador</span>
-        <div className="flex gap-6">
+      <div className="bg-china-red text-white py-2 px-4 md:px-8 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] flex justify-between items-center">
+        <span className="truncate">Importaciones Directas China a Ecuador</span>
+        <div className="hidden sm:flex gap-6">
           <span className="hover:text-china-gold cursor-pointer transition-colors">Soporte</span>
           <span className="hover:text-china-gold cursor-pointer transition-colors">Seguimiento</span>
         </div>
       </div>
 
       {/* Main Header */}
-      <div className="max-w-7xl mx-auto px-8 py-4 flex items-center justify-between gap-8">
+      <div className="max-w-7xl mx-auto px-4 md:px-8 py-4 flex items-center justify-between gap-4 md:gap-8">
         {/* Logo */}
         <BrandLogo to="/" compact textColor="text-slate-900" subTextColor="text-china-red" />
 
@@ -58,30 +58,30 @@ const PublicHeader: React.FC = () => {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
           <Link to="/carrito" className="relative p-2 text-slate-600 hover:text-china-red transition-colors">
-            <ShoppingCart size={24} />
+            <ShoppingCart size={22} md:size={24} />
             {items.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-5 h-5 bg-china-red text-white text-[10px] font-black rounded-full flex items-center justify-center shadow-lg animate-bounce">
+              <span className="absolute -top-1 -right-1 w-4 h-4 md:w-5 md:h-5 bg-china-red text-white text-[9px] md:text-[10px] font-black rounded-full flex items-center justify-center shadow-lg animate-bounce">
                 {items.length}
               </span>
             )}
           </Link>
 
-          <div className="h-6 w-[1px] bg-slate-100 mx-2"></div>
+          <div className="hidden sm:block h-6 w-[1px] bg-slate-100 mx-1 md:mx-2"></div>
 
           {isAuthenticated ? (
             <button 
-              onClick={() => navigate('/')}
-              className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-full text-xs font-black uppercase tracking-widest hover:bg-china-red transition-all shadow-lg"
+              onClick={() => navigate('/dashboard')}
+              className="hidden sm:flex items-center gap-2 bg-slate-900 text-white px-4 md:px-5 py-2 md:py-2.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest hover:bg-china-red transition-all shadow-lg"
             >
-              <User size={16} />
-              Dashboard
+              <User size={14} md:size={16} />
+              Panel
             </button>
           ) : (
             <Link 
               to="/login" 
-              className="flex items-center gap-2 bg-china-red text-white px-6 py-2.5 rounded-full text-xs font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-lg"
+              className="hidden sm:flex items-center gap-2 bg-china-red text-white px-4 md:px-6 py-2 md:py-2.5 rounded-full text-[10px] md:text-xs font-black uppercase tracking-widest hover:bg-slate-900 transition-all shadow-lg"
             >
               Login
             </Link>

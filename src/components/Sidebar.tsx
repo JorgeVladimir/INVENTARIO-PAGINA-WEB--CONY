@@ -14,7 +14,12 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -41,6 +46,7 @@ const Sidebar: React.FC = () => {
           <Link
             key={item.path}
             to={item.path}
+            onClick={onClose}
             className={`flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300 group ${
               location.pathname === item.path
                 ? 'bg-china-red text-white shadow-lg shadow-china-red/20'

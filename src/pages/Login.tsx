@@ -46,7 +46,7 @@ const Login: React.FC = () => {
       {/* Left Side - Image */}
       <div className="hidden lg:block w-1/2 relative overflow-hidden">
         <img 
-          src="https://picsum.photos/seed/swany-login/1080/1920?grayscale" 
+          src="https://picsum.photos/seed/china-login/1080/1920?grayscale" 
           className="absolute inset-0 w-full h-full object-cover opacity-60"
           alt="Login Background"
         />
@@ -58,8 +58,8 @@ const Login: React.FC = () => {
       </div>
 
       {/* Right Side - Form */}
-      <div className="w-full lg:w-1/2 flex flex-col items-center justify-center p-8 bg-white">
-        <div className="w-full max-w-md space-y-12">
+      <div className="w-full lg:w-1/2 flex flex-col items-center justify-center p-6 md:p-8 bg-white">
+        <div className="w-full max-w-md space-y-8 md:space-y-12">
           <div className="text-center space-y-4">
             <div className="flex justify-center">
               <BrandLogo compact textColor="text-china-black" subTextColor="text-china-red" />
@@ -67,21 +67,21 @@ const Login: React.FC = () => {
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em]">Portal de Acceso</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-8">
+          <form onSubmit={handleSubmit} className="space-y-6 md:space-y-8">
             {error && (
               <div className="text-china-red text-[10px] font-black uppercase tracking-widest text-center border-b border-china-red pb-2">
                 {error}
               </div>
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-4 md:space-y-6">
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Username</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Usuario</label>
                 <input 
                   type="text" 
                   required
-                  className="premium-input text-sm"
-                  placeholder="Enter your username"
+                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-china-red/10 transition-all"
+                  placeholder="Ingrese su usuario"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                 />
@@ -89,12 +89,12 @@ const Login: React.FC = () => {
 
               <div className="space-y-1">
                 <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Password</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contraseña</label>
                 </div>
                 <input 
                   type="password" 
                   required
-                  className="premium-input text-sm"
+                  className="w-full px-6 py-4 bg-slate-50 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-china-red/10 transition-all"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -107,7 +107,7 @@ const Login: React.FC = () => {
               disabled={loading}
               className="w-full china-btn-primary py-5 text-sm"
             >
-              {loading ? 'Authenticating...' : 'Sign In'}
+              {loading ? 'Autenticando...' : 'Iniciar Sesión'}
             </button>
           </form>
 

@@ -33,14 +33,14 @@ const ImportInventory: React.FC = () => {
       const json = XLSX.utils.sheet_to_json(ws);
       
       const mappedData = json.map((row: any) => ({
-        internal_code: row['Código'] || row['code'],
-        name: row['Nombre'] || row['name'],
-        price: parseFloat(row['Precio'] || row['price'] || 0),
-        cost: parseFloat(row['Costo'] || row['cost'] || 0),
-        stock: parseInt(row['Stock'] || row['stock'] || 0),
-        category_id: parseInt(row['ID Categoria'] || 1),
-        container_id: parseInt(row['ID Contenedor'] || 1),
-        warehouse_id: parseInt(row['ID Bodega'] || 1),
+        internal_code: row['Código'] || row['codigo'] || row['code'] || '',
+        name: row['Nombre'] || row['nombre'] || row['name'] || '',
+        price: parseFloat(row['Precio'] || row['precio'] || row['price'] || 0),
+        cost: parseFloat(row['Costo'] || row['costo_loc'] || row['cost'] || 0),
+        stock: parseInt(row['Stock'] || row['cantidad'] || row['stock'] || 0),
+        category_id: parseInt(row['ID Categoria'] || row['category_id'] || 1),
+        container_id: parseInt(row['ID Contenedor'] || row['CONTENEDOR '] || row['container_id'] || 1),
+        warehouse_id: parseInt(row['ID Bodega'] || row['warehouse_id'] || 1),
         image_url: row['URL Imagen'] || row['image_url'] || `https://picsum.photos/seed/${Math.random()}/400/400`
       }));
 
@@ -66,7 +66,7 @@ const ImportInventory: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(template);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    XLSX.writeFile(wb, "Plantilla_Inventario_SinoStock.xlsx");
+    XLSX.writeFile(wb, "Plantilla_Inventario_Cony.xlsx");
   };
 
   const handleImport = async () => {
@@ -93,17 +93,17 @@ const ImportInventory: React.FC = () => {
   };
 
   return (
-    <div className="p-12 space-y-12 max-w-7xl mx-auto">
-      <header className="flex justify-between items-end">
+    <div className="p-6 md:p-12 space-y-8 md:space-y-12 max-w-7xl mx-auto">
+      <header className="flex flex-col sm:row justify-between items-start sm:items-end gap-6">
         <div className="space-y-2">
-          <h1 className="text-5xl font-black text-china-red tracking-tighter uppercase">Importación Masiva</h1>
-          <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Carga masiva de inventario desde archivos inteligentes</p>
+          <h1 className="text-3xl md:text-5xl font-black text-china-red tracking-tighter uppercase">Importación Masiva</h1>
+          <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Carga masiva de inventario desde archivos inteligentes</p>
         </div>
         <button 
           onClick={downloadTemplate}
-          className="flex items-center gap-3 text-china-red font-black uppercase tracking-widest text-[10px] bg-white px-6 py-4 rounded-2xl shadow-sm border border-slate-100 hover:bg-china-red hover:text-white transition-all"
+          className="w-full sm:w-auto flex items-center justify-center gap-3 text-china-red font-black uppercase tracking-widest text-[9px] bg-white px-6 py-4 rounded-2xl shadow-sm border border-slate-100 hover:bg-china-red hover:text-white transition-all"
         >
-          <Download size={20} />
+          <Download size={18} />
           Descargar Plantilla
         </button>
       </header>
@@ -112,39 +112,39 @@ const ImportInventory: React.FC = () => {
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-white border-4 border-dashed border-slate-100 rounded-[60px] p-32 text-center space-y-8 shadow-inner"
+          className="bg-white border-4 border-dashed border-slate-100 rounded-[32px] md:rounded-[60px] p-12 md:p-32 text-center space-y-8 shadow-inner"
         >
-          <div className="w-32 h-32 bg-china-red/5 text-china-red rounded-full flex items-center justify-center mx-auto shadow-xl">
-            <FileUp size={64} />
+          <div className="w-24 h-24 md:w-32 md:h-32 bg-china-red/5 text-china-red rounded-full flex items-center justify-center mx-auto shadow-xl">
+            <FileUp size={48} className="md:size-[64px]" />
           </div>
           <div className="space-y-4">
-            <h2 className="text-4xl font-black uppercase tracking-tighter">Sube tu archivo Excel</h2>
-            <p className="text-slate-400 max-w-lg mx-auto font-medium leading-relaxed">
+            <h2 className="text-2xl md:text-4xl font-black uppercase tracking-tighter">Sube tu archivo Excel</h2>
+            <p className="text-sm md:text-slate-400 max-w-lg mx-auto font-medium leading-relaxed">
               Asegúrate de usar nuestra plantilla oficial para garantizar la integridad de los datos logísticos y de stock.
             </p>
           </div>
-          <label className="inline-block china-btn-primary px-12 py-5 cursor-pointer active:scale-95">
+          <label className="inline-block china-btn-primary px-10 md:px-12 py-4 md:py-5 cursor-pointer active:scale-95">
             Seleccionar Archivo
-            <input type="file" className="hidden" accept=".xlsx, .xls" onChange={handleFileUpload} />
+            <input type="file" className="hidden" accept=".xlsx, .xls, .csv" onChange={handleFileUpload} />
           </label>
         </motion.div>
       ) : (
-        <div className="space-y-8">
-          <div className="bg-white rounded-[40px] shadow-2xl border border-slate-100 overflow-hidden">
-            <div className="p-10 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-              <h3 className="text-xl font-black uppercase tracking-tighter flex items-center gap-3">
-                <TableIcon size={24} className="text-china-red" />
-                Vista Previa de Carga ({data.length} productos)
+        <div className="space-y-6 md:space-y-8">
+          <div className="bg-white rounded-[24px] md:rounded-[40px] shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-6 md:p-10 bg-slate-50 border-b border-slate-100 flex flex-col sm:row justify-between items-start sm:items-center gap-4">
+              <h3 className="text-lg md:text-xl font-black uppercase tracking-tighter flex items-center gap-3">
+                <TableIcon size={20} className="text-china-red" />
+                Vista Previa ({data.length} productos)
               </h3>
               <button 
                 onClick={() => setData([])}
-                className="text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-china-red transition-colors"
+                className="text-[9px] font-black uppercase tracking-widest text-slate-400 hover:text-china-red transition-colors"
               >
                 Cancelar Carga
               </button>
             </div>
-            <div className="max-h-[500px] overflow-y-auto custom-scrollbar">
-              <table className="w-full text-left border-collapse">
+            <div className="max-h-[400px] md:max-h-[500px] overflow-x-auto overflow-y-auto custom-scrollbar">
+              <table className="w-full text-left border-collapse min-w-[600px]">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr>
                     <th className="p-6 font-black text-slate-400 uppercase text-[10px] tracking-[0.2em]">Imagen</th>
@@ -180,17 +180,17 @@ const ImportInventory: React.FC = () => {
             </div>
           )}
 
-          <div className="flex justify-end gap-6">
+          <div className="flex flex-col sm:flex-row justify-end gap-4 md:gap-6">
             <button 
               onClick={() => setData([])}
-              className="px-10 py-5 rounded-2xl font-black uppercase tracking-widest text-[10px] text-slate-400 hover:bg-slate-100 transition-all"
+              className="px-10 py-4 md:py-5 rounded-2xl font-black uppercase tracking-widest text-[9px] text-slate-400 hover:bg-slate-100 transition-all"
             >
               Descartar Todo
             </button>
             <button 
               onClick={handleImport}
               disabled={loading}
-              className="china-btn-primary px-16 py-5 flex items-center gap-3 disabled:bg-slate-200"
+              className="china-btn-primary px-12 md:px-16 py-4 md:py-5 flex items-center justify-center gap-3 disabled:bg-slate-200"
             >
               {loading ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={24} />}
               Confirmar Importación
@@ -224,12 +224,12 @@ const ImportInventory: React.FC = () => {
       </AnimatePresence>
 
       {/* Guide Section */}
-      <section className="bg-china-gold/5 rounded-[60px] p-16 border border-china-gold/10 space-y-12">
-        <h2 className="text-3xl font-black text-china-red uppercase tracking-tighter flex items-center gap-4">
-          <ImageIcon className="text-china-gold" size={32} />
+      <section className="bg-china-gold/5 rounded-[32px] md:rounded-[60px] p-8 md:p-16 border border-china-gold/10 space-y-8 md:space-y-12">
+        <h2 className="text-2xl md:text-3xl font-black text-china-red uppercase tracking-tighter flex items-center gap-4">
+          <ImageIcon className="text-china-gold" size={28} />
           Guía de Carga Inteligente
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-12">
           <div className="space-y-4">
             <div className="w-12 h-12 bg-china-gold text-china-red rounded-2xl flex items-center justify-center font-black text-xl shadow-lg">1</div>
             <h3 className="text-lg font-black uppercase tracking-tight">URLs de Imagen</h3>
