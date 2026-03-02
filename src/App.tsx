@@ -37,7 +37,7 @@ const AdminLayout = () => {
   if (!isAuthenticated) return <Navigate to="/login" />;
 
   return (
-    <div className="flex bg-slate-50 min-h-screen">
+    <div className="flex bg-lina-soft min-h-screen">
       <Sidebar />
       <main className="flex-1 ml-64 min-h-screen">
         <Outlet />

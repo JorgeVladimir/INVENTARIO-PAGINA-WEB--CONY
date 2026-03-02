@@ -12,7 +12,10 @@ import {
   CreditCard,
   Loader2,
   ChevronLeft,
-  ShieldCheck
+  ShieldCheck,
+  X,
+  UserPlus,
+  LockKeyhole
 } from 'lucide-react';
 import { useCart } from '../CartContext';
 import { Link, useNavigate } from 'react-router-dom';
@@ -24,6 +27,9 @@ const CartPage: React.FC = () => {
   const [step, setStep] = useState<'cart' | 'checkout' | 'success'>('cart');
   const [loading, setLoading] = useState(false);
   const [orderResult, setOrderResult] = useState<any>(null);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
   const navigate = useNavigate();
 
   const [shippingData, setShippingData] = useState({
@@ -34,30 +40,121 @@ const CartPage: React.FC = () => {
     email: ''
   });
 
-  const handleCreateOrder = async () => {
+  const [userData, setUserData] = useState({
+    full_name: '',
+    email: '',
+    password: ''
+  });
+
+  const [cardData, setCardData] = useState({
+    cardNumber: '',
+    cardName: '',
+    expiry: '',
+    cvv: ''
+  });
+
+  const mapUbigeoByCity: Record<string, string> = {
+    Quito: '170150',
+    Guayaquil: '090150',
+    Cuenca: '010150',
+    Manta: '130150'
+  };
+
+  const formatCardNumber = (value: string) => value.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ').trim();
+  const formatExpiry = (value: string) => {
+    const clean = value.replace(/\D/g, '').slice(0, 4);
+    if (clean.length <= 2) return clean;
+    return `${clean.slice(0, 2)}/${clean.slice(2)}`;
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!shippingData.address || !shippingData.name || !shippingData.phone || !shippingData.email) {
+      setPaymentError('Completa los datos de entrega antes de confirmar.');
+      return;
+    }
+    if (!userData.full_name || !userData.email || !userData.password) {
+      setPaymentError('Completa el registro de usuario para continuar.');
+      return;
+    }
+    if (cardData.cardNumber.replace(/\s/g, '').length !== 16 || !cardData.cardName || cardData.expiry.length !== 5 || cardData.cvv.length < 3) {
+      setPaymentError('Completa correctamente los datos de la tarjeta.');
+      return;
+    }
+
     setLoading(true);
+    setPaymentError('');
+    setErrorMessage('');
+
     try {
-      const response = await fetch('/api/orders', {
+      const registerResponse = await fetch('/api/public/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData)
+      });
+
+      if (!registerResponse.ok) {
+        const data = await registerResponse.json().catch(() => ({}));
+        setPaymentError(data.error || 'No se pudo registrar el usuario.');
+        return;
+      }
+
+      const registeredUser = await registerResponse.json();
+
+      const orderResponse = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_id: 1, // Guest user or first user for demo
+          user_id: registeredUser.id,
           items: items.map(i => ({ id: i.id, quantity: i.quantity, price: i.price })),
-          total: total + 5.00 // + shipping
+          total: total + 5.00
         })
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setOrderResult({
-          ...data,
-          guide: `URB-${Math.floor(Math.random() * 1000000)}`
-        });
-        setStep('success');
-        clearCart();
+      if (!orderResponse.ok) {
+        const data = await orderResponse.json().catch(() => ({}));
+        setPaymentError(data.error || 'No se pudo generar el pedido.');
+        return;
       }
+
+      const orderData = await orderResponse.json();
+
+      const checkoutResponse = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id: orderData.id,
+          shipping_data: {
+            ...shippingData,
+            ubigeo: mapUbigeoByCity[shippingData.city] || '170150',
+            weight: 2.5,
+            pieces: items.length,
+            items
+          },
+          payment_method: 'card'
+        })
+      });
+
+      if (!checkoutResponse.ok) {
+        const data = await checkoutResponse.json().catch(() => ({}));
+        setPaymentError(data.error || 'No se pudo procesar el pago.');
+        return;
+      }
+
+      const checkoutData = await checkoutResponse.json();
+      setOrderResult({
+        ...orderData,
+        guide: checkoutData.shipping_guide,
+        orderedItems: [...items],
+        subtotal: total,
+        shippingCost: 5.00,
+        finalTotal: total + 5.00,
+      });
+      setIsPaymentModalOpen(false);
+      setStep('success');
+      clearCart();
     } catch (e) {
       console.error(e);
+      setPaymentError('Error de conexión con el servidor. Verifica que el backend esté activo.');
     } finally {
       setLoading(false);
     }
@@ -77,7 +174,7 @@ const CartPage: React.FC = () => {
     doc.text(`Cliente: ${shippingData.name}`, 20, 60);
     doc.text(`Dirección: ${shippingData.address}, ${shippingData.city}`, 20, 70);
 
-    const tableData = items.map(item => [
+    const tableData = (orderResult?.orderedItems || []).map((item: any) => [
       item.internal_code,
       item.name,
       item.quantity,
@@ -91,9 +188,9 @@ const CartPage: React.FC = () => {
       body: tableData,
       headStyles: { fillColor: [196, 30, 58] },
       foot: [
-        ['', '', '', 'Subtotal', `$${total.toFixed(2)}`],
-        ['', '', '', 'Envío', `$5.00`],
-        ['', '', '', 'TOTAL', `$${(total + 5).toFixed(2)}`]
+        ['', '', '', 'Subtotal', `$${(orderResult?.subtotal || 0).toFixed(2)}`],
+        ['', '', '', 'Envío', `$${(orderResult?.shippingCost || 0).toFixed(2)}`],
+        ['', '', '', 'TOTAL', `$${(orderResult?.finalTotal || 0).toFixed(2)}`]
       ]
     });
 
@@ -216,6 +313,12 @@ const CartPage: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {errorMessage && (
+                <div className="text-china-red text-xs font-black uppercase tracking-widest border-t border-china-red/20 pt-4">
+                  {errorMessage}
+                </div>
+              )}
             </div>
           ) : null}
         </div>
@@ -243,7 +346,10 @@ const CartPage: React.FC = () => {
             <div className="space-y-4">
               {step === 'cart' ? (
                 <button 
-                  onClick={() => setStep('checkout')}
+                  onClick={() => {
+                    setErrorMessage('');
+                    setStep('checkout');
+                  }}
                   className="w-full bg-china-red text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl hover:bg-white hover:text-china-red transition-all flex items-center justify-center gap-3"
                 >
                   Continuar al Pago
@@ -252,12 +358,20 @@ const CartPage: React.FC = () => {
               ) : step === 'checkout' ? (
                 <div className="space-y-4">
                   <button 
-                    onClick={handleCreateOrder}
-                    disabled={loading || !shippingData.address || !shippingData.name}
+                    onClick={() => {
+                      setPaymentError('');
+                      setUserData((prev) => ({
+                        ...prev,
+                        full_name: shippingData.name || prev.full_name,
+                        email: shippingData.email || prev.email,
+                      }));
+                      setIsPaymentModalOpen(true);
+                    }}
+                    disabled={loading || !shippingData.address || !shippingData.name || !shippingData.email || !shippingData.phone}
                     className="w-full bg-emerald-500 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl hover:bg-white hover:text-emerald-500 transition-all flex items-center justify-center gap-3 disabled:bg-slate-700 disabled:text-white/30"
                   >
-                    {loading ? <Loader2 className="animate-spin" /> : <CreditCard size={20} />}
-                    Confirmar Pedido
+                    <CreditCard size={20} />
+                    Ventana de Pago
                   </button>
                   <button 
                     onClick={() => setStep('cart')}
@@ -279,6 +393,66 @@ const CartPage: React.FC = () => {
           </div>
         </aside>
       </div>
+
+      <AnimatePresence>
+        {isPaymentModalOpen && (
+          <div className="fixed inset-0 z-[220] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-china-black/80 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20 }} className="relative w-full max-w-3xl bg-white rounded-[36px] shadow-2xl p-8 md:p-10 space-y-8">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-5">
+                <div className="space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-china-red">Pago Seguro</p>
+                  <h3 className="text-2xl font-black uppercase tracking-tight">Registro de Usuario y Tarjeta</h3>
+                </div>
+                <button onClick={() => setIsPaymentModalOpen(false)} className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-500" title="Cerrar ventana de pago" aria-label="Cerrar ventana de pago">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-slate-900">
+                    <UserPlus size={18} className="text-china-red" />
+                    <p className="text-sm font-black uppercase tracking-widest">Registro de Usuario</p>
+                  </div>
+                  <input className="china-input text-sm" placeholder="Nombre completo" value={userData.full_name} onChange={(e) => setUserData({ ...userData, full_name: e.target.value })} />
+                  <input className="china-input text-sm" placeholder="Correo" type="email" value={userData.email} onChange={(e) => setUserData({ ...userData, email: e.target.value })} />
+                  <input className="china-input text-sm" placeholder="Contraseña" type="password" value={userData.password} onChange={(e) => setUserData({ ...userData, password: e.target.value })} />
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-slate-900">
+                    <LockKeyhole size={18} className="text-china-red" />
+                    <p className="text-sm font-black uppercase tracking-widest">Datos de Tarjeta</p>
+                  </div>
+                  <input className="china-input text-sm" placeholder="Número de tarjeta" value={cardData.cardNumber} onChange={(e) => setCardData({ ...cardData, cardNumber: formatCardNumber(e.target.value) })} />
+                  <input className="china-input text-sm" placeholder="Nombre en tarjeta" value={cardData.cardName} onChange={(e) => setCardData({ ...cardData, cardName: e.target.value })} />
+                  <div className="grid grid-cols-2 gap-4">
+                    <input className="china-input text-sm" placeholder="MM/AA" value={cardData.expiry} onChange={(e) => setCardData({ ...cardData, expiry: formatExpiry(e.target.value) })} />
+                    <input className="china-input text-sm" placeholder="CVV" value={cardData.cvv} onChange={(e) => setCardData({ ...cardData, cvv: e.target.value.replace(/\D/g, '').slice(0, 4) })} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-5 flex items-center justify-between">
+                <span className="text-xs font-black uppercase tracking-widest text-slate-500">Total a pagar</span>
+                <span className="text-3xl font-black text-china-red">${(total + 5).toFixed(2)}</span>
+              </div>
+
+              {(paymentError || errorMessage) && (
+                <p className="text-china-red text-[11px] font-black uppercase tracking-widest border-t border-china-red/20 pt-4">
+                  {paymentError || errorMessage}
+                </p>
+              )}
+
+              <button onClick={handleConfirmPayment} disabled={loading} className="w-full china-btn-primary !py-5 flex items-center justify-center gap-3 disabled:opacity-70">
+                {loading ? <Loader2 className="animate-spin" /> : <CreditCard size={18} />}
+                Confirmar Pago
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Success Modal */}
       <AnimatePresence>

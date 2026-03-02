@@ -2,13 +2,13 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useCart } from '../CartContext';
 import { useAuth } from '../AuthContext';
+import BrandLogo from './BrandLogo';
 import { 
   ShoppingCart, 
   User, 
   Search, 
   Menu,
-  X,
-  Store
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -32,15 +32,7 @@ const PublicHeader: React.FC = () => {
       {/* Main Header */}
       <div className="max-w-7xl mx-auto px-8 py-4 flex items-center justify-between gap-8">
         {/* Logo */}
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 bg-china-red rounded-xl flex items-center justify-center shadow-lg group-hover:rotate-12 transition-transform">
-            <Store className="text-white" size={24} />
-          </div>
-          <div>
-            <h1 className="font-black text-xl tracking-tighter text-slate-900">SINOSTOCK</h1>
-            <p className="text-[9px] text-china-red font-black uppercase tracking-widest">Grupo Lina</p>
-          </div>
-        </Link>
+        <BrandLogo to="/" compact textColor="text-slate-900" subTextColor="text-china-red" />
 
         {/* Navigation */}
         <nav className="hidden lg:flex items-center gap-8">

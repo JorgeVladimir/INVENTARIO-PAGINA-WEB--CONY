@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Product, Category } from '../types';
 import { useCart } from '../CartContext';
+import { resolveProductImage } from '../utils/productImages';
 
 const Catalog: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -28,7 +29,7 @@ const Catalog: React.FC = () => {
       fetch('/api/public/products').then(res => res.json()),
       fetch('/api/categories').then(res => res.json())
     ]).then(([p, c]) => {
-      setProducts(p);
+      setProducts(p.map((product: Product) => ({ ...product, image_url: resolveProductImage(product) })));
       setCategories(c);
     });
   }, []);

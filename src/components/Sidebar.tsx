@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import BrandLogo from './BrandLogo';
 import { 
   LayoutDashboard, 
   Package, 
@@ -8,7 +9,6 @@ import {
   ClipboardList, 
   Settings, 
   LogOut,
-  Store,
   Warehouse,
   FileUp
 } from 'lucide-react';
@@ -33,15 +33,7 @@ const Sidebar: React.FC = () => {
   return (
     <div className="w-64 h-screen bg-china-black text-white flex flex-col fixed left-0 top-0 z-50 shadow-2xl">
       <div className="p-10 flex flex-col items-center gap-2 border-b border-white/5">
-        <Link to="/" className="flex flex-col items-center gap-3 group">
-          <div className="w-14 h-14 bg-china-red rounded-2xl flex items-center justify-center shadow-lg group-hover:rotate-12 transition-transform">
-            <Store className="text-white" size={32} />
-          </div>
-          <div className="text-center">
-            <h1 className="font-black text-2xl tracking-tighter text-white">SINOSTOCK</h1>
-            <p className="text-[9px] text-china-gold font-black uppercase tracking-[0.3em]">Grupo Lina</p>
-          </div>
-        </Link>
+        <BrandLogo to="/" className="flex-col text-center" textColor="text-white" subTextColor="text-china-gold" />
       </div>
 
       <div className="flex-1 py-10 px-6 space-y-2 overflow-y-auto custom-scrollbar">

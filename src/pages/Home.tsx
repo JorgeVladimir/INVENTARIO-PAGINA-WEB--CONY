@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Product } from '../types';
+import { resolveProductImage } from '../utils/productImages';
 
 const Home: React.FC = () => {
   const [featuredProducts, setFeaturedProducts] = useState<Product[]>([]);
@@ -18,19 +19,20 @@ const Home: React.FC = () => {
   useEffect(() => {
     fetch('/api/public/products')
       .then(res => res.json())
-      .then(data => setFeaturedProducts(data.slice(0, 4)));
+      .then(data => {
+        const normalized = data.map((product: Product) => ({
+          ...product,
+          image_url: resolveProductImage(product),
+        }));
+        setFeaturedProducts(normalized.slice(0, 4));
+      });
   }, []);
 
   return (
     <div className="space-y-20 pb-20">
       {/* Hero Banner */}
       <section className="relative h-[80vh] bg-slate-900 overflow-hidden flex items-center">
-        <img 
-          src="https://picsum.photos/seed/china-cargo/1920/1080?blur=2" 
-          className="absolute inset-0 w-full h-full object-cover opacity-50"
-          alt="Hero"
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-china-red/80 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-china-red/80 to-china-black"></div>
         
         <div className="relative z-10 max-w-7xl mx-auto px-8 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
           <motion.div

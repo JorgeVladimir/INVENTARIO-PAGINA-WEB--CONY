@@ -31,6 +31,7 @@ const NewOrder: React.FC = () => {
   const [step, setStep] = useState<'cart' | 'shipping' | 'payment' | 'success'>('cart');
   const [loading, setLoading] = useState(false);
   const [orderResult, setOrderResult] = useState<any>(null);
+  const [errorMessage, setErrorMessage] = useState('');
 
   // Shipping State
   const [shippingData, setShippingData] = useState({
@@ -53,6 +54,7 @@ const NewOrder: React.FC = () => {
 
   const handleGetQuote = async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
       const res = await fetch('/api/shipping/quote', {
         method: 'POST',
@@ -63,11 +65,16 @@ const NewOrder: React.FC = () => {
           pieces: items.length
         })
       });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'No fue posible cotizar el envío.');
+      }
       const data = await res.json();
       setShippingQuote(data);
       setStep('payment');
     } catch (e) {
       console.error(e);
+      setErrorMessage('No fue posible cotizar el envío. Inténtalo nuevamente.');
     } finally {
       setLoading(false);
     }
@@ -78,6 +85,7 @@ const NewOrder: React.FC = () => {
 
   const handleCheckout = async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
       const orderRes = await fetch('/api/orders', {
         method: 'POST',
@@ -88,6 +96,10 @@ const NewOrder: React.FC = () => {
           total: finalTotal
         })
       });
+      if (!orderRes.ok) {
+        const errorData = await orderRes.json().catch(() => ({}));
+        throw new Error(errorData.error || 'No se pudo crear la orden.');
+      }
       const orderData = await orderRes.json();
 
       const checkoutRes = await fetch('/api/checkout', {
@@ -104,6 +116,10 @@ const NewOrder: React.FC = () => {
           payment_method: 'card'
         })
       });
+      if (!checkoutRes.ok) {
+        const errorData = await checkoutRes.json().catch(() => ({}));
+        throw new Error(errorData.error || 'No se pudo completar el checkout.');
+      }
       const checkoutData = await checkoutRes.json();
       
       setOrderResult({
@@ -114,6 +130,7 @@ const NewOrder: React.FC = () => {
       clearCart();
     } catch (e) {
       console.error(e);
+      setErrorMessage(e instanceof Error ? e.message : 'Error al finalizar la orden.');
     } finally {
       setLoading(false);
     }
@@ -330,6 +347,9 @@ const NewOrder: React.FC = () => {
         </div>
 
         <div className="p-8 bg-slate-50 border-t border-slate-100 space-y-6">
+          {errorMessage && (
+            <p className="text-china-red text-[10px] font-black uppercase tracking-widest">{errorMessage}</p>
+          )}
           <div className="flex justify-between items-end">
             <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Total Final</span>
             <span className="text-4xl font-black text-china-red leading-none">${(step === 'payment' ? finalTotal : total).toFixed(2)}</span>

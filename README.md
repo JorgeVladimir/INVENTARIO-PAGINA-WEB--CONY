@@ -2,19 +2,26 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# Frontend - Inventario CONY
 
-This contains everything you need to run your app locally.
+Este repositorio contiene solo el frontend (React + Vite).
 
-View your app in AI Studio: https://ai.studio/apps/81ddc007-f567-4d8c-ba68-7f44651f707d
+## Requisitos
 
-## Run Locally
+- Node.js 20+
 
-**Prerequisites:**  Node.js
+## Configuración
 
-
-1. Install dependencies:
+1. Instalar dependencias:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+2. (Opcional) Crear `.env.local` con:
+   `VITE_API_URL=http://localhost:7002`
+
+## Ejecutar
+
+`npm run dev`
+
+Frontend local: `http://localhost:7000`
+
+El frontend consume rutas `/api/*` y las envía al backend vía proxy de Vite.
+Cuando tu backend esté en otro servidor/proyecto, ajusta `VITE_API_URL`.

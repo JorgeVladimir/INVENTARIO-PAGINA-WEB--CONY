@@ -22,7 +22,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setItems(prev => {
       const existing = prev.find(i => i.id === product.id);
       if (existing) {
-        return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + quantity } : i);
+        const nextQuantity = existing.quantity + quantity;
+        if (nextQuantity <= 0) {
+          return prev.filter(i => i.id !== product.id);
+        }
+        return prev.map(i => i.id === product.id ? { ...i, quantity: nextQuantity } : i);
+      }
+      if (quantity <= 0) {
+        return prev;
       }
       return [...prev, { ...product, quantity }];
     });

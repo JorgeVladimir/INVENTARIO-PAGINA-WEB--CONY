@@ -36,14 +36,14 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Hero Section - China Premium Style */}
+      {/* Hero Section */}
       <div className="relative h-[50vh] bg-china-black overflow-hidden flex items-center">
         <img 
           src="https://picsum.photos/seed/shanghai/1920/1080?blur=4" 
           className="absolute inset-0 w-full h-full object-cover opacity-30"
           alt="Hero Background"
         />
-        <div className="absolute inset-0 bg-gradient-to-r from-china-red/40 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-china-red/55 to-transparent"></div>
         <div className="relative z-10 max-w-7xl mx-auto px-12 w-full">
           <motion.div
             initial={{ opacity: 0, x: -30 }}
@@ -51,12 +51,12 @@ const Dashboard: React.FC = () => {
             transition={{ duration: 0.8 }}
             className="max-w-2xl space-y-6"
           >
-            <div className="inline-flex items-center gap-2 bg-china-gold text-china-red px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
+            <div className="inline-flex items-center gap-2 bg-white text-china-red px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-[0.3em] shadow-xl">
               <TrendingUp size={14} />
               Crecimiento del 24% este mes
             </div>
-            <h1 className="text-7xl font-black text-white tracking-tighter leading-none uppercase">Panel de<br/><span className="text-china-gold">Control Global</span></h1>
-            <p className="text-lg text-white/70 font-medium tracking-widest uppercase">SinoStock Ecuador: Gestión Inteligente de Importaciones</p>
+            <h1 className="text-7xl font-black text-white tracking-tighter leading-none uppercase">Panel de<br/><span className="text-china-gold">Importadora Lina</span></h1>
+            <p className="text-lg text-white/80 font-medium tracking-widest uppercase">Gestión inteligente de inventario y órdenes</p>
           </motion.div>
         </div>
       </div>
@@ -128,7 +128,7 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
             
-            <div className="bg-china-gold/10 p-10 rounded-[48px] border border-china-gold/20 space-y-6">
+            <div className="bg-white p-10 rounded-[48px] border border-china-red/20 space-y-6 shadow-sm">
               <h4 className="text-xl font-black text-china-red uppercase tracking-tighter">Reporte Mensual</h4>
               <p className="text-xs font-bold text-china-red/60 leading-relaxed uppercase tracking-widest">Descarga el resumen detallado de operaciones y stock por contenedor.</p>
               <button className="w-full china-btn-gold !py-4">Descargar PDF</button>
