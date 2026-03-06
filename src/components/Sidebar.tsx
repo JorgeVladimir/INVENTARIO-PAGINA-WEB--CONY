@@ -9,17 +9,15 @@ import {
   ClipboardList, 
   Settings, 
   LogOut,
-  Warehouse,
   FileUp
 } from 'lucide-react';
-import { motion } from 'motion/react';
 
 interface SidebarProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onClose = () => {} }) => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();

@@ -11,35 +11,101 @@ import {
   X,
   Plus
 } from 'lucide-react';
-import { Product, Category } from '../types';
+import { Product } from '../types';
 import { useCart } from '../CartContext';
 import { resolveProductImage } from '../utils/productImages';
 
+const toText = (value: any) => (value === null || value === undefined ? '' : String(value).trim());
+const toNumber = (value: any, fallback = 0) => {
+  if (value === null || value === undefined || value === '') return fallback;
+  const parsed = Number(String(value).replace(',', '.').trim());
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const readValue = (row: Record<string, any>, keys: string[]) => {
+  for (const key of keys) {
+    if (row[key] !== undefined && row[key] !== null) return row[key];
+    const foundKey = Object.keys(row).find((current) => current.toLowerCase() === key.toLowerCase());
+    if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) return row[foundKey];
+  }
+  return null;
+};
+
+const normalizeCatalogProduct = (row: Record<string, any>, index: number): Product => {
+  const codbarras =
+    toText(readValue(row, ['codbarras', 'codigo_barras', 'codbarra'])) ||
+    toText(readValue(row, ['codigoproduc', 'codigoproducto', 'codigo'])) ||
+    `SIN-CODIGO-${index + 1}`;
+
+  const nombre =
+    toText(readValue(row, ['nombre', 'nombre_corto', 'nombrecorto', 'codigoproduc', 'codigoproducto'])) ||
+    codbarras;
+
+  const descripcion = toText(readValue(row, ['descripcion', 'detalle', 'nombre'])) || nombre;
+  const grupo = toText(readValue(row, ['grupo', 'categoria', 'categorianombre'])) || 'Sin grupo';
+  const precioBulto = toNumber(readValue(row, ['precio_bulto', 'preciobulto', 'bulto']), 0);
+  const precioMayorista = toNumber(readValue(row, ['precio_mayorista', 'precio_mayor', 'preciomayor', 'mayorista', 'mayor']), 0);
+  const precioUnidad = toNumber(readValue(row, ['precio_unidad', 'preciounidad', 'unidad', 'precio']), 0);
+  const costo = toNumber(readValue(row, ['costo', 'cost']), 0);
+  const stock = toNumber(readValue(row, ['stock', 'cantidadstock', 'totalcantidad', 'total_cantidad']), 0);
+  const imageUrl = toText(readValue(row, ['imagen', 'foto', 'image_url', 'imageurl']));
+  const id = toNumber(readValue(row, ['id']), index + 1);
+
+  return {
+    id,
+    internal_code: codbarras,
+    name: nombre,
+    codbarras,
+    nombre,
+    descripcion,
+    grupo,
+    category_id: 1,
+    category_name: grupo,
+    price: precioUnidad,
+    precio_bulto: precioBulto,
+    precio_mayorista: precioMayorista,
+    precio_unidad: precioUnidad,
+    cost: costo,
+    stock,
+    container_id: 1,
+    warehouse_id: 1,
+    image_url: imageUrl,
+  };
+};
+
 const Catalog: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
-  const [priceRange, setPriceRange] = useState(1000);
+  const [selectedGroup, setSelectedGroup] = useState('all');
   const { addToCart } = useCart();
   const [addedId, setAddedId] = useState<number | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/public/products').then(res => res.json()),
-      fetch('/api/categories').then(res => res.json())
-    ]).then(([p, c]) => {
-      setProducts(p.map((product: Product) => ({ ...product, image_url: resolveProductImage(product) })));
-      setCategories(c);
+    fetch('/api/ecommerce/productos')
+      .then(async (res) => (res.ok ? res.json() : []))
+      .then((rows) => {
+      const normalized = Array.isArray(rows)
+        ? rows.map((row, index) => normalizeCatalogProduct(row, index))
+        : [];
+
+      setProducts(normalized.map((product) => ({ ...product, image_url: resolveProductImage(product) })));
     });
   }, []);
 
+  const groups = Array.from(
+    new Set(products.map((p) => toText(p.grupo)).filter((group) => group.length > 0))
+  ).sort((a, b) => a.localeCompare(b));
+
   const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || 
-                         p.internal_code.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = selectedCategory === 'all' || p.category_id === parseInt(selectedCategory);
-    const matchesPrice = p.price <= priceRange;
-    return matchesSearch && matchesCategory && matchesPrice;
+    const codigo = toText(p.codbarras) || p.internal_code;
+    const nombre = toText(p.nombre) || p.name;
+    const descripcion = toText(p.descripcion);
+    const matchesSearch = nombre.toLowerCase().includes(search.toLowerCase()) ||
+                         codigo.toLowerCase().includes(search.toLowerCase()) ||
+                         descripcion.toLowerCase().includes(search.toLowerCase());
+    const grupo = toText(p.grupo) || toText(p.category_name) || 'General';
+    const matchesGroup = selectedGroup === 'all' || grupo === selectedGroup;
+    return matchesSearch && matchesGroup;
   });
 
   const handleAddToCart = (product: Product) => {
@@ -78,44 +144,28 @@ const Catalog: React.FC = () => {
                 </div>
               </div>
 
-              {/* Categories */}
+              {/* Groups */}
               <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Categorías</label>
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupo</label>
                 <div className="flex flex-wrap lg:flex-col gap-2">
                   <button 
-                    onClick={() => setSelectedCategory('all')}
-                    className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedCategory === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
+                    onClick={() => setSelectedGroup('all')}
+                    className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
                   >
-                    Todas
+                    Todos los grupos
                   </button>
-                  {categories.map(cat => (
+                  {groups.map(group => (
                     <button 
-                      key={cat.id}
-                      onClick={() => setSelectedCategory(cat.id.toString())}
-                      className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedCategory === cat.id.toString() ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
+                      key={group}
+                      onClick={() => setSelectedGroup(group)}
+                      className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === group ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
                     >
-                      {cat.name}
+                      {group}
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Price Range */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Precio Máximo</label>
-                  <span className="text-sm font-black text-china-red">${priceRange}</span>
-                </div>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="1000" 
-                  step="10"
-                  className="w-full accent-china-red"
-                  value={priceRange}
-                  onChange={(e) => setPriceRange(parseInt(e.target.value))}
-                />
-              </div>
             </div>
 
             {/* Promo Card */}
@@ -138,6 +188,16 @@ const Catalog: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
               {filteredProducts.map((product, idx) => (
+                (() => {
+                  const codigo = toText(product.codbarras) || product.internal_code;
+                  const nombre = toText(product.nombre) || product.name;
+                  const descripcion = toText(product.descripcion) || nombre;
+                  const grupo = toText(product.grupo) || product.category_name || 'General';
+                  const precioBulto = toNumber(product.precio_bulto, 0);
+                  const precioMayorista = toNumber(product.precio_mayorista, 0);
+                  const precioUnidad = toNumber(product.precio_unidad, product.price);
+
+                  return (
                 <motion.div
                   key={product.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -148,37 +208,56 @@ const Catalog: React.FC = () => {
                   <div className="relative aspect-square overflow-hidden bg-slate-100">
                     <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                     <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-full text-[9px] font-black text-china-red uppercase tracking-widest shadow-sm">
-                      {product.category_name}
+                      {codigo}
                     </div>
-                    {product.stock < 10 && (
+                    {product.stock < 20 && (
                       <div className="absolute bottom-4 right-4 bg-china-red text-white px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest shadow-lg animate-pulse">
-                        Últimas Unidades
+                        Stock Crítico
                       </div>
                     )}
                   </div>
                   <div className="p-6 md:p-8 flex-1 flex flex-col gap-4 md:gap-6">
                     <div className="space-y-1 md:space-y-2">
-                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">{product.internal_code}</p>
-                      <h3 className="font-black text-lg md:text-xl text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-2">{product.name}</h3>
+                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">{grupo}</p>
+                      <h3 className="font-black text-lg md:text-xl text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-2">{nombre}</h3>
+                      <p className="text-xs text-slate-500 font-semibold line-clamp-2">{descripcion}</p>
                     </div>
                     
-                    <div className="mt-auto flex justify-between items-center">
-                      <div className="space-y-1">
-                        <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Precio</p>
-                        <span className="text-2xl md:text-3xl font-black text-slate-900">${product.price.toFixed(2)}</span>
+                    <div className="mt-auto space-y-4">
+                      <div className="grid grid-cols-2 gap-3 text-xs">
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bulto</p>
+                          <p className="font-black text-slate-900">${precioBulto.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Mayorista</p>
+                          <p className="font-black text-slate-900">${precioMayorista.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Unidad</p>
+                          <p className="font-black text-slate-900">${precioUnidad.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Stock</p>
+                          <p className="font-black text-slate-900">{product.stock}</p>
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => handleAddToCart(product)}
-                        disabled={addedId === product.id}
-                        className={`w-12 h-12 md:w-14 md:h-14 rounded-[16px] md:rounded-[20px] flex items-center justify-center transition-all shadow-xl active:scale-90 ${
-                          addedId === product.id ? 'bg-emerald-500 text-white' : 'bg-china-red text-white hover:bg-slate-900'
-                        }`}
-                      >
-                        {addedId === product.id ? <Check size={20} md:size={24} /> : <Plus size={20} md:size={24} />}
-                      </button>
+                      <div className="flex justify-end">
+                        <button 
+                          onClick={() => handleAddToCart(product)}
+                          disabled={addedId === product.id}
+                          className={`w-12 h-12 md:w-14 md:h-14 rounded-[16px] md:rounded-[20px] flex items-center justify-center transition-all shadow-xl active:scale-90 ${
+                            addedId === product.id ? 'bg-emerald-500 text-white' : 'bg-china-red text-white hover:bg-slate-900'
+                          }`}
+                        >
+                          {addedId === product.id ? <Check size={20} md:size={24} /> : <Plus size={20} md:size={24} />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </motion.div>
+                  );
+                })()
               ))}
             </div>
 
@@ -192,7 +271,7 @@ const Catalog: React.FC = () => {
                   <p className="text-sm md:text-base text-slate-400 font-medium">No encontramos productos que coincidan con tu búsqueda.</p>
                 </div>
                 <button 
-                  onClick={() => { setSearch(''); setSelectedCategory('all'); setPriceRange(1000); }}
+                  onClick={() => { setSearch(''); setSelectedGroup('all'); }}
                   className="bg-china-red text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-lg hover:bg-slate-900 transition-all"
                 >
                   Limpiar Filtros

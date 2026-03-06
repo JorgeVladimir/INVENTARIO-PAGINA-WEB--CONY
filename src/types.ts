@@ -9,9 +9,16 @@ export interface Product {
   id: number;
   internal_code: string;
   name: string;
+  codbarras?: string;
+  nombre?: string;
+  descripcion?: string;
+  grupo?: string;
   category_id: number;
   category_name?: string;
   price: number;
+  precio_bulto?: number;
+  precio_mayorista?: number;
+  precio_unidad?: number;
   cost: number;
   stock: number;
   container_id: number;
