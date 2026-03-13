@@ -87,6 +87,11 @@ const NewOrder: React.FC = () => {
     setLoading(true);
     setErrorMessage('');
     try {
+      const idempotencyKey =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : `checkout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
       const orderRes = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,6 +112,7 @@ const NewOrder: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderData.id,
+          idempotency_key: idempotencyKey,
           shipping_data: {
             ...shippingData,
             weight: 2.5,
@@ -124,7 +130,9 @@ const NewOrder: React.FC = () => {
       
       setOrderResult({
         ...orderData,
-        guide: checkoutData.shipping_guide
+        guide: checkoutData.shipping_guide,
+        shipmentStatus: checkoutData.shipment_status,
+        paymentStatus: checkoutData.payment_status
       });
       setStep('success');
       clearCart();

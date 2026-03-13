@@ -36,6 +36,8 @@ export interface Order {
   order_date: string;
   total: number;
   status: 'pendiente' | 'pagado' | 'despachado';
+  shipping_guide?: string | null;
+  shipment_status?: 'guia_generada' | 'en_transito' | 'entregado' | 'sin_guia' | string;
   details?: OrderDetail[];
 }
 

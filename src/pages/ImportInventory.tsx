@@ -14,6 +14,7 @@ import { useNavigate } from 'react-router-dom';
 const ImportInventory: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -33,24 +34,35 @@ const ImportInventory: React.FC = () => {
     setError('');
   };
 
-  const downloadTemplate = () => {
-    const template = [
-      {
-        'Código': 'PROD-00X',
-        'Nombre': 'Producto Ejemplo',
-        'Precio': 10.50,
-        'Costo': 5.00,
-        'Stock': 100,
-        'ID Categoria': 1,
-        'ID Contenedor': 1,
-        'ID Bodega': 1,
-        'URL Imagen': 'https://link-a-la-imagen.com/foto.jpg'
+  const downloadTemplate = async () => {
+    setDownloadingTemplate(true);
+    setError('');
+
+    try {
+      const res = await fetch('/api/ecommerce/template');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo obtener la plantilla desde el servidor');
       }
-    ];
-    const ws = XLSX.utils.json_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Plantilla");
-    XLSX.writeFile(wb, "Plantilla_Inventario_Cony.xlsx");
+
+      const payload = await res.json();
+      const columns: Array<{ name: string }> = Array.isArray(payload.columns) ? payload.columns : [];
+      const headers = columns.map((c) => c.name);
+      const rows = Array.isArray(payload.sampleRows) && payload.sampleRows.length > 0
+        ? payload.sampleRows
+        : [Object.fromEntries(headers.map((h) => [h, '']))];
+
+      const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
+      ws['!cols'] = headers.map((header) => ({ wch: Math.max(14, header.length + 4) }));
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, payload.sheetName || 'Plantilla_Productos');
+      XLSX.writeFile(wb, 'Plantilla_Productos_ECOMERCE.xlsx');
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo descargar la plantilla');
+    } finally {
+      setDownloadingTemplate(false);
+    }
   };
 
   const handleImport = async () => {
@@ -93,10 +105,11 @@ const ImportInventory: React.FC = () => {
         </div>
         <button 
           onClick={downloadTemplate}
+          disabled={downloadingTemplate}
           className="w-full sm:w-auto flex items-center justify-center gap-3 text-china-red font-black uppercase tracking-widest text-[9px] bg-white px-6 py-4 rounded-2xl shadow-sm border border-slate-100 hover:bg-china-red hover:text-white transition-all"
         >
-          <Download size={18} />
-          Descargar Plantilla
+          {downloadingTemplate ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+          {downloadingTemplate ? 'Generando Plantilla...' : 'Descargar Plantilla'}
         </button>
       </header>
 

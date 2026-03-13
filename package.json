@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "dev:web": "vite",
+    "dev:api": "npm --prefix backend run dev",
+    "dev:full": "kill-port 7000 7002 && concurrently -n FRONT,BACK -c cyan,green \"npm run dev:web\" \"npm run dev:api\"",
+    "install:all": "npm install; npm --prefix backend install",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -34,6 +37,8 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1",
     "tailwindcss": "^4.1.14",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

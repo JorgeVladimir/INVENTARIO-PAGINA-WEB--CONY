@@ -32,10 +32,10 @@ const Login: React.FC = () => {
           navigate('/dashboard');
         }
       } else {
-        setError('Invalid credentials. Please try again.');
+        setError('Credenciales inválidas. Verifica usuario y contraseña.');
       }
     } catch (err) {
-      setError('Connection error. Please check your internet.');
+      setError('Error de conexión con el servidor. Revisa que el backend esté activo.');
     } finally {
       setLoading(false);
     }
@@ -109,6 +109,13 @@ const Login: React.FC = () => {
             >
               {loading ? 'Autenticando...' : 'Iniciar Sesión'}
             </button>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.25em]">Usuarios de prueba</p>
+              <p className="text-[11px] text-slate-600"><span className="font-black">Admin:</span> admin / admin123</p>
+              <p className="text-[11px] text-slate-600"><span className="font-black">Tienda:</span> tienda / tienda123</p>
+              <p className="text-[11px] text-slate-600"><span className="font-black">Bodega:</span> bodega / bodega123</p>
+            </div>
           </form>
 
           <div className="pt-12 border-t border-slate-200 flex justify-between items-center text-[9px] font-black text-slate-400 uppercase tracking-widest">
