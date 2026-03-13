@@ -770,6 +770,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS payment_transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL,
+    order_number TEXT,
     idempotency_key TEXT UNIQUE,
     payment_method TEXT,
     provider TEXT,
@@ -786,6 +787,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS shipments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER UNIQUE,
+    order_number TEXT,
     provider TEXT,
     service_id TEXT,
     service_name TEXT,
@@ -816,6 +818,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS ws_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER,
+    order_number TEXT,
     service TEXT,
     endpoint TEXT,
     request_payload TEXT,
@@ -826,6 +829,20 @@ db.exec(`
     FOREIGN KEY(order_id) REFERENCES orders(id)
   );
 `);
+
+// SQLite migrations for existing local files.
+try {
+  db.exec("ALTER TABLE payment_transactions ADD COLUMN order_number TEXT");
+} catch {}
+try {
+  db.exec("ALTER TABLE shipments ADD COLUMN order_number TEXT");
+} catch {}
+try {
+  db.exec("ALTER TABLE ws_logs ADD COLUMN order_number TEXT");
+} catch {}
+try {
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS UX_shipments_order_number ON shipments(order_number) WHERE order_number IS NOT NULL");
+} catch {}
 
 // Ensure roles exist
 const roleCount = db.prepare("SELECT COUNT(*) as count FROM roles").get() as { count: number };
@@ -853,6 +870,175 @@ const ensureOrderDetailsTable = () => {
       FOREIGN KEY(order_id) REFERENCES orders(id),
       FOREIGN KEY(product_id) REFERENCES products(id)
     );
+  `);
+};
+
+const ensureSqlServerOperationalSchema = async (pool: sql.ConnectionPool) => {
+  await pool.request().query(`
+    IF OBJECT_ID(N'dbo.payment_transactions', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.payment_transactions (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        order_id INT NOT NULL,
+        order_number NVARCHAR(80) NULL,
+        idempotency_key NVARCHAR(120) NOT NULL,
+        payment_method NVARCHAR(30) NULL,
+        provider NVARCHAR(60) NULL,
+        provider_transaction_id NVARCHAR(120) NULL,
+        amount DECIMAL(18,2) NOT NULL CONSTRAINT DF_payment_transactions_amount DEFAULT(0),
+        status NVARCHAR(30) NOT NULL CONSTRAINT DF_payment_transactions_status DEFAULT('processing'),
+        request_payload NVARCHAR(MAX) NULL,
+        response_payload NVARCHAR(MAX) NULL,
+        created_at DATETIME2(7) NOT NULL CONSTRAINT DF_payment_transactions_created_at DEFAULT(SYSDATETIME()),
+        updated_at DATETIME2(7) NOT NULL CONSTRAINT DF_payment_transactions_updated_at DEFAULT(SYSDATETIME())
+      );
+    END;
+
+    IF COL_LENGTH('dbo.payment_transactions', 'order_number') IS NULL
+      ALTER TABLE dbo.payment_transactions ADD order_number NVARCHAR(80) NULL;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'UX_payment_transactions_idempotency_key'
+        AND object_id = OBJECT_ID(N'dbo.payment_transactions')
+    )
+      CREATE UNIQUE INDEX UX_payment_transactions_idempotency_key ON dbo.payment_transactions(idempotency_key);
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_payment_transactions_order_number'
+        AND object_id = OBJECT_ID(N'dbo.payment_transactions')
+    )
+      CREATE INDEX IX_payment_transactions_order_number ON dbo.payment_transactions(order_number);
+
+    IF OBJECT_ID(N'dbo.shipments', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.shipments (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        order_id INT NULL,
+        order_number NVARCHAR(80) NULL,
+        provider NVARCHAR(60) NULL,
+        service_id NVARCHAR(30) NULL,
+        service_name NVARCHAR(120) NULL,
+        tracking_code NVARCHAR(120) NULL,
+        status NVARCHAR(30) NOT NULL CONSTRAINT DF_shipments_status DEFAULT('sin_guia'),
+        destination_ubigeo NVARCHAR(20) NULL,
+        destination_address NVARCHAR(250) NULL,
+        receiver_name NVARCHAR(120) NULL,
+        receiver_phone NVARCHAR(30) NULL,
+        quote_total DECIMAL(18,2) NOT NULL CONSTRAINT DF_shipments_quote_total DEFAULT(0),
+        provider_payload NVARCHAR(MAX) NULL,
+        created_at DATETIME2(7) NOT NULL CONSTRAINT DF_shipments_created_at DEFAULT(SYSDATETIME()),
+        updated_at DATETIME2(7) NOT NULL CONSTRAINT DF_shipments_updated_at DEFAULT(SYSDATETIME())
+      );
+    END;
+
+    IF COL_LENGTH('dbo.shipments', 'order_number') IS NULL
+      ALTER TABLE dbo.shipments ADD order_number NVARCHAR(80) NULL;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'UX_shipments_order_id'
+        AND object_id = OBJECT_ID(N'dbo.shipments')
+    )
+      CREATE UNIQUE INDEX UX_shipments_order_id ON dbo.shipments(order_id) WHERE order_id IS NOT NULL;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'UX_shipments_order_number'
+        AND object_id = OBJECT_ID(N'dbo.shipments')
+    )
+      CREATE UNIQUE INDEX UX_shipments_order_number ON dbo.shipments(order_number) WHERE order_number IS NOT NULL;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'UX_shipments_tracking_code'
+        AND object_id = OBJECT_ID(N'dbo.shipments')
+    )
+      CREATE UNIQUE INDEX UX_shipments_tracking_code ON dbo.shipments(tracking_code) WHERE tracking_code IS NOT NULL;
+
+    IF OBJECT_ID(N'dbo.shipment_events', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.shipment_events (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        shipment_id INT NOT NULL,
+        status NVARCHAR(30) NOT NULL,
+        description NVARCHAR(250) NULL,
+        source NVARCHAR(30) NULL,
+        payload NVARCHAR(MAX) NULL,
+        event_time DATETIME2(7) NOT NULL CONSTRAINT DF_shipment_events_event_time DEFAULT(SYSDATETIME())
+      );
+    END;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_shipment_events_shipment_id'
+        AND object_id = OBJECT_ID(N'dbo.shipment_events')
+    )
+      CREATE INDEX IX_shipment_events_shipment_id ON dbo.shipment_events(shipment_id);
+
+    IF OBJECT_ID(N'dbo.ws_logs', N'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.ws_logs (
+        id INT IDENTITY(1,1) PRIMARY KEY,
+        order_id INT NULL,
+        order_number NVARCHAR(80) NULL,
+        service NVARCHAR(60) NOT NULL,
+        endpoint NVARCHAR(150) NOT NULL,
+        request_payload NVARCHAR(MAX) NULL,
+        response_payload NVARCHAR(MAX) NULL,
+        status_code INT NULL,
+        success BIT NOT NULL CONSTRAINT DF_ws_logs_success DEFAULT(0),
+        created_at DATETIME2(7) NOT NULL CONSTRAINT DF_ws_logs_created_at DEFAULT(SYSDATETIME())
+      );
+    END;
+
+    IF COL_LENGTH('dbo.ws_logs', 'order_number') IS NULL
+      ALTER TABLE dbo.ws_logs ADD order_number NVARCHAR(80) NULL;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE name = 'IX_ws_logs_order_number'
+        AND object_id = OBJECT_ID(N'dbo.ws_logs')
+    )
+      CREATE INDEX IX_ws_logs_order_number ON dbo.ws_logs(order_number);
+  `);
+
+  await pool.request().query(`
+    CREATE OR ALTER VIEW dbo.vw_order_logistics_tracking
+    AS
+    SELECT
+      s.order_id,
+      s.order_number,
+      s.tracking_code,
+      s.status AS shipment_status,
+      s.provider,
+      s.service_name,
+      s.destination_ubigeo,
+      s.receiver_name,
+      s.receiver_phone,
+      s.created_at AS shipment_created_at,
+      pt.status AS payment_status,
+      pt.amount AS payment_amount,
+      pt.payment_method,
+      pt.provider_transaction_id,
+      se.status AS last_event_status,
+      se.description AS last_event_description,
+      se.event_time AS last_event_time
+    FROM dbo.shipments s
+    OUTER APPLY (
+      SELECT TOP 1 *
+      FROM dbo.payment_transactions p
+      WHERE (p.order_number IS NOT NULL AND p.order_number = s.order_number)
+         OR (p.order_number IS NULL AND p.order_id = s.order_id)
+      ORDER BY p.id DESC
+    ) pt
+    OUTER APPLY (
+      SELECT TOP 1 *
+      FROM dbo.shipment_events e
+      WHERE e.shipment_id = s.id
+      ORDER BY e.id DESC
+    ) se;
   `);
 };
 
@@ -899,6 +1085,7 @@ async function startServer() {
   try {
     sqlPool = await new sql.ConnectionPool(sqlServerConfig).connect();
     await ensureSqlServerSchema(sqlPool);
+    await ensureSqlServerOperationalSchema(sqlPool);
     productosSchemaColumns = await getProductosSchemaColumns(sqlPool);
   } catch (error) {
     console.warn("SQL Server no disponible. Se ejecuta modo parcial sin endpoints ecommerce SQL.");
@@ -1485,20 +1672,22 @@ async function startServer() {
 
     try {
       const sqlTrackingResult = await sqlPool.request().query(`
-        SELECT order_id, tracking_code, shipment_status
+        SELECT order_id, order_number, tracking_code, shipment_status
         FROM dbo.vw_order_logistics_tracking
       `);
 
-      const trackingMap = new Map<number, { tracking_code: string | null; shipment_status: string | null }>();
+      const trackingMap = new Map<string, { tracking_code: string | null; shipment_status: string | null }>();
       for (const row of sqlTrackingResult.recordset as Array<any>) {
-        trackingMap.set(Number(row.order_id), {
+        const key = String(row.order_number || row.order_id || "");
+        if (!key) continue;
+        trackingMap.set(key, {
           tracking_code: row.tracking_code ?? null,
           shipment_status: row.shipment_status ?? null,
         });
       }
 
       const merged = (orders as Array<any>).map((order) => {
-        const tracking = trackingMap.get(Number(order.id));
+        const tracking = trackingMap.get(String(order.order_number || order.id));
         if (!tracking) return order;
         return {
           ...order,
@@ -1531,6 +1720,10 @@ async function startServer() {
 
   app.get("/api/orders/:id/logistics", async (req, res) => {
     const orderId = Number(req.params.id);
+    const orderData = db.prepare("SELECT id, order_number FROM orders WHERE id = ?").get(orderId) as
+      | { id: number; order_number: string }
+      | undefined;
+    const orderNumber = orderData?.order_number || null;
     const shipment = db.prepare("SELECT * FROM shipments WHERE order_id = ?").get(orderId);
     const payment = db
       .prepare("SELECT * FROM payment_transactions WHERE order_id = ? ORDER BY id DESC LIMIT 1")
@@ -1547,30 +1740,36 @@ async function startServer() {
       const sqlTracking = await sqlPool
         .request()
         .input("order_id", sql.Int, orderId)
+        .input("order_number", sql.NVarChar(80), orderNumber)
         .query(`
           SELECT TOP 1 *
           FROM dbo.vw_order_logistics_tracking
-          WHERE order_id = @order_id
+          WHERE (order_number IS NOT NULL AND order_number = @order_number)
+             OR (order_number IS NULL AND order_id = @order_id)
           ORDER BY shipment_created_at DESC
         `);
 
       const sqlShipment = await sqlPool
         .request()
         .input("order_id", sql.Int, orderId)
+        .input("order_number", sql.NVarChar(80), orderNumber)
         .query(`
           SELECT TOP 1 *
           FROM dbo.shipments
-          WHERE order_id = @order_id
+          WHERE (order_number IS NOT NULL AND order_number = @order_number)
+             OR (order_number IS NULL AND order_id = @order_id)
           ORDER BY id DESC
         `);
 
       const sqlPayment = await sqlPool
         .request()
         .input("order_id", sql.Int, orderId)
+        .input("order_number", sql.NVarChar(80), orderNumber)
         .query(`
           SELECT TOP 1 *
           FROM dbo.payment_transactions
-          WHERE order_id = @order_id
+          WHERE (order_number IS NOT NULL AND order_number = @order_number)
+             OR (order_number IS NULL AND order_id = @order_id)
           ORDER BY id DESC
         `);
 
@@ -1720,29 +1919,34 @@ async function startServer() {
 
   // Confirm Payment & Generate Urbano Guide
   app.post("/api/checkout", async (req, res) => {
-    const { order_id, shipping_data, payment_method, idempotency_key } = req.body;
+    const { order_id, order_number, shipping_data, payment_method, idempotency_key } = req.body;
 
     try {
-      const order = db.prepare("SELECT id, total FROM orders WHERE id = ?").get(order_id) as
-        | { id: number; total: number }
+      const order = (order_number
+        ? db.prepare("SELECT id, order_number, total FROM orders WHERE order_number = ?").get(order_number)
+        : db.prepare("SELECT id, order_number, total FROM orders WHERE id = ?").get(order_id)) as
+        | { id: number; order_number: string; total: number }
         | undefined;
 
       if (!order) {
         return res.status(404).json({ error: "Orden no encontrada" });
       }
 
+      const resolvedOrderId = Number(order.id);
+      const resolvedOrderNumber = String(order.order_number);
+
       const normalizedIdempotencyKey =
         (typeof idempotency_key === "string" && idempotency_key.trim()) ||
-        `checkout-${order_id}-${String(Date.now())}`;
+        `checkout-${resolvedOrderNumber}-${String(Date.now())}`;
 
       const existingPayment = db
         .prepare(
-          "SELECT * FROM payment_transactions WHERE order_id = ? AND idempotency_key = ? AND status = 'succeeded' LIMIT 1"
+          "SELECT * FROM payment_transactions WHERE order_number = ? AND idempotency_key = ? AND status = 'succeeded' LIMIT 1"
         )
-        .get(order_id, normalizedIdempotencyKey) as any;
+        .get(resolvedOrderNumber, normalizedIdempotencyKey) as any;
 
       if (existingPayment) {
-        const existingShipment = db.prepare("SELECT * FROM shipments WHERE order_id = ?").get(order_id) as any;
+        const existingShipment = db.prepare("SELECT * FROM shipments WHERE order_number = ?").get(resolvedOrderNumber) as any;
         return res.json({
           success: true,
           idempotent: true,
@@ -1755,15 +1959,16 @@ async function startServer() {
       }
 
       const now = new Date().toISOString();
-      const paymentRequestPayload = JSON.stringify({ order_id, payment_method, total: order.total });
+      const paymentRequestPayload = JSON.stringify({ order_id: resolvedOrderId, order_number: resolvedOrderNumber, payment_method, total: order.total });
       const paymentInsert = db
         .prepare(
           `INSERT INTO payment_transactions
-           (order_id, idempotency_key, payment_method, provider, provider_transaction_id, amount, status, request_payload, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (order_id, order_number, idempotency_key, payment_method, provider, provider_transaction_id, amount, status, request_payload, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
-          order_id,
+          resolvedOrderId,
+          resolvedOrderNumber,
           normalizedIdempotencyKey,
           payment_method || "card",
           "mock-gateway",
@@ -1785,7 +1990,7 @@ async function startServer() {
       );
 
       // 2. Update Order Status to 'pagado'
-      db.prepare("UPDATE orders SET status = 'pagado' WHERE id = ?").run(order_id);
+      db.prepare("UPDATE orders SET status = 'pagado' WHERE id = ?").run(resolvedOrderId);
 
       // 3. Generate Urbano Guide (Section 1.1 of manual)
       // We simulate the call to https://app.urbano.com.ec/ws/ue/ge
@@ -1793,7 +1998,7 @@ async function startServer() {
         "json": JSON.stringify({
           "linea": "3",
           "id_contrato": URBANO_CONFIG.id_contrato,
-          "cod_rastreo": `SINO-${order_id}`,
+          "cod_rastreo": `SINO-${resolvedOrderNumber}`,
           "nom_cliente": shipping_data.name,
           "dir_entrega": shipping_data.address,
           "ubi_direc": shipping_data.ubigeo, // 6 digit code
@@ -1812,10 +2017,10 @@ async function startServer() {
       const wsLogInsert = db
         .prepare(
           `INSERT INTO ws_logs
-           (order_id, service, endpoint, request_payload, status_code, success, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+           (order_id, order_number, service, endpoint, request_payload, status_code, success, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(order_id, "urbano", "/ws/ue/ge", urbanoRequestPayload, 0, 0, new Date().toISOString());
+        .run(resolvedOrderId, resolvedOrderNumber, "urbano", "/ws/ue/ge", urbanoRequestPayload, 0, 0, new Date().toISOString());
 
       // Mocking Urbano Response
       const mockUrbanoResponse = {
@@ -1827,9 +2032,11 @@ async function startServer() {
       const shipmentInsert = db
         .prepare(
           `INSERT INTO shipments
-           (order_id, provider, service_id, service_name, tracking_code, status, destination_ubigeo, destination_address, receiver_name, receiver_phone, quote_total, provider_payload, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (order_id, order_number, provider, service_id, service_name, tracking_code, status, destination_ubigeo, destination_address, receiver_name, receiver_phone, quote_total, provider_payload, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(order_id) DO UPDATE SET
+             order_id = excluded.order_id,
+             order_number = excluded.order_number,
              provider = excluded.provider,
              service_id = excluded.service_id,
              service_name = excluded.service_name,
@@ -1844,7 +2051,8 @@ async function startServer() {
              updated_at = excluded.updated_at`
         )
         .run(
-          order_id,
+          resolvedOrderId,
+          resolvedOrderNumber,
           "urbano",
           "1",
           "Distribucion",
@@ -1860,7 +2068,7 @@ async function startServer() {
           new Date().toISOString()
         );
 
-      const shipment = db.prepare("SELECT * FROM shipments WHERE order_id = ?").get(order_id) as any;
+      const shipment = db.prepare("SELECT * FROM shipments WHERE order_number = ?").get(resolvedOrderNumber) as any;
 
       if (shipment?.id) {
         db.prepare(
@@ -1888,7 +2096,8 @@ async function startServer() {
         try {
           const sqlNow = new Date().toISOString();
           const sqlPaymentRequest = sqlPool.request();
-          sqlPaymentRequest.input("order_id", sql.Int, Number(order_id));
+          sqlPaymentRequest.input("order_id", sql.Int, Number(resolvedOrderId));
+          sqlPaymentRequest.input("order_number", sql.NVarChar(80), resolvedOrderNumber);
           sqlPaymentRequest.input("idempotency_key", sql.NVarChar(120), normalizedIdempotencyKey);
           sqlPaymentRequest.input("payment_method", sql.NVarChar(30), payment_method || "card");
           sqlPaymentRequest.input("provider", sql.NVarChar(60), "mock-gateway");
@@ -1910,6 +2119,7 @@ async function startServer() {
               UPDATE dbo.payment_transactions
               SET
                 order_id = @order_id,
+                order_number = @order_number,
                 payment_method = @payment_method,
                 provider = @provider,
                 provider_transaction_id = @provider_transaction_id,
@@ -1923,14 +2133,15 @@ async function startServer() {
             ELSE
             BEGIN
               INSERT INTO dbo.payment_transactions
-                (order_id, idempotency_key, payment_method, provider, provider_transaction_id, amount, status, request_payload, response_payload, created_at, updated_at)
+                (order_id, order_number, idempotency_key, payment_method, provider, provider_transaction_id, amount, status, request_payload, response_payload, created_at, updated_at)
               VALUES
-                (@order_id, @idempotency_key, @payment_method, @provider, @provider_transaction_id, @amount, @status, @request_payload, @response_payload, @created_at, @updated_at);
+                (@order_id, @order_number, @idempotency_key, @payment_method, @provider, @provider_transaction_id, @amount, @status, @request_payload, @response_payload, @created_at, @updated_at);
             END
           `);
 
           const sqlShipmentRequest = sqlPool.request();
-          sqlShipmentRequest.input("order_id", sql.Int, Number(order_id));
+          sqlShipmentRequest.input("order_id", sql.Int, Number(resolvedOrderId));
+          sqlShipmentRequest.input("order_number", sql.NVarChar(80), resolvedOrderNumber);
           sqlShipmentRequest.input("provider", sql.NVarChar(60), "urbano");
           sqlShipmentRequest.input("service_id", sql.NVarChar(30), "1");
           sqlShipmentRequest.input("service_name", sql.NVarChar(120), "Distribucion");
@@ -1946,10 +2157,11 @@ async function startServer() {
           sqlShipmentRequest.input("updated_at", sql.DateTime2, new Date(sqlNow));
 
           await sqlShipmentRequest.query(`
-            IF EXISTS (SELECT 1 FROM dbo.shipments WHERE order_id = @order_id)
+            IF EXISTS (SELECT 1 FROM dbo.shipments WHERE order_number = @order_number)
             BEGIN
               UPDATE dbo.shipments
               SET
+                order_id = @order_id,
                 provider = @provider,
                 service_id = @service_id,
                 service_name = @service_name,
@@ -1962,21 +2174,21 @@ async function startServer() {
                 quote_total = @quote_total,
                 provider_payload = @provider_payload,
                 updated_at = @updated_at
-              WHERE order_id = @order_id;
+              WHERE order_number = @order_number;
             END
             ELSE
             BEGIN
               INSERT INTO dbo.shipments
-                (order_id, provider, service_id, service_name, tracking_code, status, destination_ubigeo, destination_address, receiver_name, receiver_phone, quote_total, provider_payload, created_at, updated_at)
+                (order_id, order_number, provider, service_id, service_name, tracking_code, status, destination_ubigeo, destination_address, receiver_name, receiver_phone, quote_total, provider_payload, created_at, updated_at)
               VALUES
-                (@order_id, @provider, @service_id, @service_name, @tracking_code, @shipment_status, @destination_ubigeo, @destination_address, @receiver_name, @receiver_phone, @quote_total, @provider_payload, @created_at, @updated_at);
+                (@order_id, @order_number, @provider, @service_id, @service_name, @tracking_code, @shipment_status, @destination_ubigeo, @destination_address, @receiver_name, @receiver_phone, @quote_total, @provider_payload, @created_at, @updated_at);
             END
           `);
 
           const shipmentLookup = await sqlPool
             .request()
-            .input("order_id", sql.Int, Number(order_id))
-            .query("SELECT TOP 1 id FROM dbo.shipments WHERE order_id = @order_id ORDER BY id DESC");
+            .input("order_number", sql.NVarChar(80), resolvedOrderNumber)
+            .query("SELECT TOP 1 id FROM dbo.shipments WHERE order_number = @order_number ORDER BY id DESC");
 
           const sqlShipmentId = shipmentLookup.recordset?.[0]?.id;
 
@@ -1997,7 +2209,8 @@ async function startServer() {
 
           await sqlPool
             .request()
-            .input("order_id", sql.Int, Number(order_id))
+            .input("order_id", sql.Int, Number(resolvedOrderId))
+            .input("order_number", sql.NVarChar(80), resolvedOrderNumber)
             .input("service", sql.NVarChar(60), "urbano")
             .input("endpoint", sql.NVarChar(150), "/ws/ue/ge")
             .input("request_payload", sql.NVarChar(sql.MAX), urbanoRequestPayload)
@@ -2006,8 +2219,8 @@ async function startServer() {
             .input("success", sql.Bit, true)
             .input("created_at", sql.DateTime2, new Date(sqlNow))
             .query(`
-              INSERT INTO dbo.ws_logs (order_id, service, endpoint, request_payload, response_payload, status_code, success, created_at)
-              VALUES (@order_id, @service, @endpoint, @request_payload, @response_payload, @status_code, @success, @created_at)
+              INSERT INTO dbo.ws_logs (order_id, order_number, service, endpoint, request_payload, response_payload, status_code, success, created_at)
+              VALUES (@order_id, @order_number, @service, @endpoint, @request_payload, @response_payload, @status_code, @success, @created_at)
             `);
         } catch (sqlSyncError) {
           console.error("Error al sincronizar checkout con SQL Server:", sqlSyncError);
@@ -2019,6 +2232,7 @@ async function startServer() {
         payment_status: "succeeded",
         payment_transaction_id: paymentTransactionId,
         idempotency_key: normalizedIdempotencyKey,
+        order_number: resolvedOrderNumber,
         shipping_guide: mockUrbanoResponse.guía,
         shipment_status: "guia_generada",
         message: "Pago procesado y guía de Urbano generada correctamente"
