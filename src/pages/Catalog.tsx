@@ -32,14 +32,17 @@ const readValue = (row: Record<string, any>, keys: string[]) => {
 };
 
 const normalizeCatalogProduct = (row: Record<string, any>, index: number): Product => {
-  const codbarras =
-    toText(readValue(row, ['codbarras', 'codigo_barras', 'codbarra'])) ||
+  const itemCode =
     toText(readValue(row, ['codigoproduc', 'codigoproducto', 'codigo'])) ||
     `SIN-CODIGO-${index + 1}`;
 
+  const codbarras =
+    toText(readValue(row, ['codbarras', 'codigo_barras', 'codbarra'])) ||
+    '9999999';
+
   const nombre =
     toText(readValue(row, ['nombre', 'nombre_corto', 'nombrecorto', 'codigoproduc', 'codigoproducto'])) ||
-    codbarras;
+    itemCode;
 
   const descripcion = toText(readValue(row, ['descripcion', 'detalle', 'nombre'])) || nombre;
   const grupo = toText(readValue(row, ['grupo', 'categoria', 'categorianombre'])) || 'Sin grupo';
@@ -53,7 +56,7 @@ const normalizeCatalogProduct = (row: Record<string, any>, index: number): Produ
 
   return {
     id,
-    internal_code: codbarras,
+    internal_code: itemCode,
     name: nombre,
     codbarras,
     nombre,
@@ -74,39 +77,118 @@ const normalizeCatalogProduct = (row: Record<string, any>, index: number): Produ
 };
 
 const Catalog: React.FC = () => {
+  type GroupOption = { value: string; total: number };
+  const PAGE_SIZE = 500;
   const [products, setProducts] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('all');
+  const [groupsFromDb, setGroupsFromDb] = useState<GroupOption[]>([]);
+  const [visibleCount, setVisibleCount] = useState(60);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const { addToCart } = useCart();
   const [addedId, setAddedId] = useState<number | null>(null);
 
+  const fetchProducts = async (reset: boolean) => {
+    if (isLoading) return;
+
+    setIsLoading(true);
+    const pageOffset = reset ? 0 : nextOffset;
+
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(PAGE_SIZE));
+      params.set('offset', String(pageOffset));
+      const trimmedSearch = search.trim();
+      if (trimmedSearch) {
+        params.set('q', trimmedSearch);
+      }
+
+      const response = await fetch(`/api/ecommerce/productos?${params.toString()}`);
+      const payload = response.ok ? await response.json() : { items: [] };
+      const rows = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+
+      const normalized = rows.map((row, index) => normalizeCatalogProduct(row, pageOffset + index));
+      const normalizedWithImage = normalized.map((product) => ({
+        ...product,
+        image_url: resolveProductImage(product),
+      }));
+
+      setProducts((prev) => (reset ? normalizedWithImage : [...prev, ...normalizedWithImage]));
+
+      const serverTotal = Number(payload?.total || 0);
+      const mergedCount = pageOffset + normalizedWithImage.length;
+      setTotalCount(serverTotal > 0 ? serverTotal : mergedCount);
+      setNextOffset(mergedCount);
+      setHasMore(serverTotal > 0 ? mergedCount < serverTotal : normalizedWithImage.length === PAGE_SIZE);
+    } catch {
+      if (reset) {
+        setProducts([]);
+        setTotalCount(0);
+        setNextOffset(0);
+        setHasMore(false);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchGroups = async () => {
+    try {
+      const response = await fetch('/api/ecommerce/grupos');
+      if (!response.ok) return;
+
+      const payload = await response.json();
+      const rows = Array.isArray(payload?.items) ? payload.items : [];
+      const normalized = rows
+        .map((row: any) => ({
+          value: toText(row?.grupo),
+          total: toNumber(row?.total, 0),
+        }))
+        .filter((row: GroupOption) => row.value.length > 0);
+
+      setGroupsFromDb(normalized);
+    } catch {
+      // Si falla, se mantiene fallback en frontend con grupos detectados de productos.
+    }
+  };
+
   useEffect(() => {
-    fetch('/api/ecommerce/productos')
-      .then(async (res) => (res.ok ? res.json() : []))
-      .then((rows) => {
-      const normalized = Array.isArray(rows)
-        ? rows.map((row, index) => normalizeCatalogProduct(row, index))
-        : [];
+    const timer = setTimeout(() => {
+      setVisibleCount(60);
+      fetchProducts(true);
+      fetchGroups();
+    }, 250);
 
-      setProducts(normalized.map((product) => ({ ...product, image_url: resolveProductImage(product) })));
-    });
-  }, []);
+    return () => clearTimeout(timer);
+  }, [search]);
 
-  const groups = Array.from(
-    new Set(products.map((p) => toText(p.grupo)).filter((group) => group.length > 0))
-  ).sort((a, b) => a.localeCompare(b));
+  const groupsFallback = Array.from(
+    new Set<string>(products.map((p) => toText(p.grupo)).filter((group) => group.length > 0))
+  ).sort((a, b) => String(a).localeCompare(String(b)));
+
+  const groups = groupsFromDb.length > 0
+    ? groupsFromDb.map((group) => group.value)
+    : groupsFallback;
 
   const filteredProducts = products.filter(p => {
-    const codigo = toText(p.codbarras) || p.internal_code;
-    const nombre = toText(p.nombre) || p.name;
-    const descripcion = toText(p.descripcion);
-    const matchesSearch = nombre.toLowerCase().includes(search.toLowerCase()) ||
-                         codigo.toLowerCase().includes(search.toLowerCase()) ||
-                         descripcion.toLowerCase().includes(search.toLowerCase());
     const grupo = toText(p.grupo) || toText(p.category_name) || 'General';
     const matchesGroup = selectedGroup === 'all' || grupo === selectedGroup;
-    return matchesSearch && matchesGroup;
+    return matchesGroup;
   });
+
+  useEffect(() => {
+    // Reset visual window when filters/search change to keep render responsive.
+    setVisibleCount(60);
+  }, [search, selectedGroup]);
+
+  const visibleProducts = filteredProducts.slice(0, visibleCount);
 
   const handleAddToCart = (product: Product) => {
     addToCart(product, 1);
@@ -179,22 +261,25 @@ const Catalog: React.FC = () => {
           {/* Main Content */}
           <main className="flex-1 space-y-6 md:space-y-8">
             <div className="flex justify-between items-center bg-slate-50 p-3 md:p-4 rounded-2xl md:rounded-3xl">
-              <p className="text-xs md:text-sm font-bold text-slate-500 ml-2 md:ml-4">Mostrando <span className="text-slate-900">{filteredProducts.length}</span> productos</p>
+              <p className="text-xs md:text-sm font-bold text-slate-500 ml-2 md:ml-4">Mostrando <span className="text-slate-900">{visibleProducts.length}</span> de {totalCount || filteredProducts.length} productos</p>
               <div className="flex gap-2">
                 <button className="p-2 bg-white rounded-xl shadow-sm text-china-red"><LayoutGrid size={18} md:size={20} /></button>
                 <button className="p-2 text-slate-400 hover:text-slate-600"><List size={18} md:size={20} /></button>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6 md:gap-8">
-              {filteredProducts.map((product, idx) => (
+            {isLoading && products.length === 0 && (
+              <div className="bg-slate-50 rounded-[32px] p-10 text-center text-slate-500 font-semibold">
+                Cargando productos...
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8">
+              {visibleProducts.map((product, idx) => (
                 (() => {
-                  const codigo = toText(product.codbarras) || product.internal_code;
-                  const nombre = toText(product.nombre) || product.name;
-                  const descripcion = toText(product.descripcion) || nombre;
-                  const grupo = toText(product.grupo) || product.category_name || 'General';
-                  const precioBulto = toNumber(product.precio_bulto, 0);
-                  const precioMayorista = toNumber(product.precio_mayorista, 0);
+                  const codigoBarras = toText(product.codbarras) || '9999999';
+                  const numeroArticulo = toText(product.internal_code) || codigoBarras;
+                  const descripcion = toText(product.descripcion) || toText(product.nombre) || numeroArticulo;
                   const precioUnidad = toNumber(product.precio_unidad, product.price);
 
                   return (
@@ -208,38 +293,21 @@ const Catalog: React.FC = () => {
                   <div className="relative aspect-square overflow-hidden bg-slate-100">
                     <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
                     <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-full text-[9px] font-black text-china-red uppercase tracking-widest shadow-sm">
-                      {codigo}
+                      {codigoBarras}
                     </div>
-                    {product.stock < 20 && (
-                      <div className="absolute bottom-4 right-4 bg-china-red text-white px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest shadow-lg animate-pulse">
-                        Stock Crítico
-                      </div>
-                    )}
                   </div>
                   <div className="p-6 md:p-8 flex-1 flex flex-col gap-4 md:gap-6">
                     <div className="space-y-1 md:space-y-2">
-                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">{grupo}</p>
-                      <h3 className="font-black text-lg md:text-xl text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-2">{nombre}</h3>
-                      <p className="text-xs text-slate-500 font-semibold line-clamp-2">{descripcion}</p>
+                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Nro Artículo: {numeroArticulo}</p>
+                      <h3 className="font-black text-base md:text-lg text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-3">{descripcion}</h3>
+                      <p className="text-xs text-slate-500 font-semibold">Código de barras: {codigoBarras}</p>
                     </div>
                     
                     <div className="mt-auto space-y-4">
-                      <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="grid grid-cols-1 gap-3 text-xs">
                         <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Bulto</p>
-                          <p className="font-black text-slate-900">${precioBulto.toFixed(2)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Mayorista</p>
-                          <p className="font-black text-slate-900">${precioMayorista.toFixed(2)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Unidad</p>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">ECUASOL P. UNITARIO</p>
                           <p className="font-black text-slate-900">${precioUnidad.toFixed(2)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Stock</p>
-                          <p className="font-black text-slate-900">{product.stock}</p>
                         </div>
                       </div>
                       <div className="flex justify-end">
@@ -260,6 +328,31 @@ const Catalog: React.FC = () => {
                 })()
               ))}
             </div>
+
+            {visibleProducts.length < filteredProducts.length && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((current) => current + 60)}
+                  className="bg-slate-900 text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-lg hover:bg-china-red transition-all"
+                >
+                  Cargar más
+                </button>
+              </div>
+            )}
+
+            {hasMore && (
+              <div className="flex justify-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => fetchProducts(false)}
+                  disabled={isLoading}
+                  className="bg-china-red text-white px-8 py-3 rounded-2xl font-black uppercase tracking-widest text-[10px] md:text-xs shadow-lg hover:bg-slate-900 transition-all disabled:opacity-60"
+                >
+                  {isLoading ? 'Cargando...' : 'Traer más desde SAP'}
+                </button>
+              </div>
+            )}
 
             {filteredProducts.length === 0 && (
               <div className="py-20 md:py-40 text-center space-y-6 bg-slate-50 rounded-[32px] md:rounded-[60px] px-6">

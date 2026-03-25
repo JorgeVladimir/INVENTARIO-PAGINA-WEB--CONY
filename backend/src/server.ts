@@ -1,18 +1,39 @@
+import "dotenv/config";
 import express from "express";
 import Database from "better-sqlite3";
 import multer from "multer";
 import * as XLSX from "xlsx";
 import sql from "mssql";
+import { createHash, randomBytes } from "crypto";
+
+const sanitizeSqlIdentifier = (value: string, fallback: string) => {
+  const clean = String(value || "").trim();
+  if (!clean) return fallback;
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(clean) ? clean : fallback;
+};
+
+const ECOMMERCE_PRODUCTS_SCHEMA = sanitizeSqlIdentifier(process.env.ECOMMERCE_PRODUCTS_SCHEMA || "dbo", "dbo");
+const ECOMMERCE_PRODUCTS_TABLE = sanitizeSqlIdentifier(process.env.ECOMMERCE_PRODUCTS_TABLE || "ECPRDU", "ECPRDU");
+const ECOMMERCE_PRODUCTS_OBJECT = `${ECOMMERCE_PRODUCTS_SCHEMA}.${ECOMMERCE_PRODUCTS_TABLE}`;
+const ECOMMERCE_PRODUCTS_SQL = `[${ECOMMERCE_PRODUCTS_SCHEMA}].[${ECOMMERCE_PRODUCTS_TABLE}]`;
+const SAP_B1_SQL_FILTER = String(process.env.SAP_B1_SQL_FILTER || "").trim();
+const SAP_B1_SQL_TEXT = String(process.env.SAP_B1_SQL_TEXT || "").trim();
 
 const db = new Database("sinostock.db");
+const sqlServerPort = Number(process.env.SQLSERVER_PORT || 0);
+const sqlServerInstance = process.env.SQLSERVER_INSTANCE || "SQLEXPRESS";
 const sqlServerConfig: sql.config = {
   user: process.env.SQLSERVER_USER || "jvtt",
   password: process.env.SQLSERVER_PASSWORD || "jvtt1995",
   server: process.env.SQLSERVER_HOST || "localhost",
+  ...(Number.isFinite(sqlServerPort) && sqlServerPort > 0 ? { port: sqlServerPort } : {}),
   database: process.env.SQLSERVER_DATABASE || "E-COMERCE",
+  requestTimeout: Number(process.env.SQLSERVER_REQUEST_TIMEOUT_MS || "120000"),
+  connectionTimeout: Number(process.env.SQLSERVER_CONNECTION_TIMEOUT_MS || "30000"),
   options: {
     encrypt: false,
     trustServerCertificate: true,
+    ...(Number.isFinite(sqlServerPort) && sqlServerPort > 0 ? {} : { instanceName: sqlServerInstance }),
   },
   pool: {
     max: 10,
@@ -22,10 +43,14 @@ const sqlServerConfig: sql.config = {
 };
 
 const ensureSqlServerSchema = async (pool: sql.ConnectionPool) => {
+  if (ECOMMERCE_PRODUCTS_TABLE.toLowerCase() !== "productos") {
+    return;
+  }
+
   await pool.request().query(`
-    IF OBJECT_ID(N'dbo.Productos', N'U') IS NULL
+    IF OBJECT_ID(N'${ECOMMERCE_PRODUCTS_OBJECT}', N'U') IS NULL
     BEGIN
-      CREATE TABLE dbo.Productos (
+      CREATE TABLE ${ECOMMERCE_PRODUCTS_SQL} (
         Id INT IDENTITY(1,1) PRIMARY KEY,
         Imagen NVARCHAR(500) NULL,
         Codigo NVARCHAR(120) NOT NULL,
@@ -46,7 +71,7 @@ const ensureSqlServerSchema = async (pool: sql.ConnectionPool) => {
 
     SELECT TOP 1 @IndexColumn = c.name
     FROM sys.columns c
-    WHERE c.object_id = OBJECT_ID(N'dbo.Productos')
+    WHERE c.object_id = OBJECT_ID(N'${ECOMMERCE_PRODUCTS_OBJECT}')
       AND LOWER(c.name) IN ('codbarras', 'codigo', 'codigoproducto', 'sku');
 
     IF @IndexColumn IS NOT NULL
@@ -54,11 +79,11 @@ const ensureSqlServerSchema = async (pool: sql.ConnectionPool) => {
         SELECT 1
         FROM sys.indexes
         WHERE name = 'UX_Productos_ImportKey'
-          AND object_id = OBJECT_ID(N'dbo.Productos')
+          AND object_id = OBJECT_ID(N'${ECOMMERCE_PRODUCTS_OBJECT}')
       )
     BEGIN
       DECLARE @sql NVARCHAR(MAX) =
-        N'CREATE UNIQUE INDEX UX_Productos_ImportKey ON dbo.Productos(' + QUOTENAME(@IndexColumn) + N') WHERE ' + QUOTENAME(@IndexColumn) + N' IS NOT NULL';
+        N'CREATE UNIQUE INDEX UX_Productos_ImportKey ON ${ECOMMERCE_PRODUCTS_SQL}(' + QUOTENAME(@IndexColumn) + N') WHERE ' + QUOTENAME(@IndexColumn) + N' IS NOT NULL';
       EXEC sp_executesql @sql;
     END;
   `);
@@ -98,7 +123,7 @@ const getProductosColumnMap = async (pool: sql.ConnectionPool): Promise<Producto
   const result = await pool.request().query(`
     SELECT COLUMN_NAME
     FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Productos'
+    WHERE TABLE_SCHEMA = '${ECOMMERCE_PRODUCTS_SCHEMA}' AND TABLE_NAME = '${ECOMMERCE_PRODUCTS_TABLE}'
   `);
 
   const columns = new Set<string>(result.recordset.map((row: any) => String(row.COLUMN_NAME).toLowerCase()));
@@ -126,7 +151,7 @@ const getProductosColumnLengths = async (pool: sql.ConnectionPool, map: Producto
   const result = await pool.request().query(`
     SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH
     FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'Productos'
+    WHERE TABLE_SCHEMA = '${ECOMMERCE_PRODUCTS_SCHEMA}' AND TABLE_NAME = '${ECOMMERCE_PRODUCTS_TABLE}'
   `);
 
   const lengths = new Map<string, number | null>();
@@ -190,9 +215,9 @@ const getProductosSchemaColumns = async (pool: sql.ConnectionPool): Promise<Prod
       c.CHARACTER_MAXIMUM_LENGTH,
       c.IS_NULLABLE,
       c.COLUMN_DEFAULT,
-      COLUMNPROPERTY(OBJECT_ID('dbo.Productos'), c.COLUMN_NAME, 'IsIdentity') AS IS_IDENTITY
+      COLUMNPROPERTY(OBJECT_ID('${ECOMMERCE_PRODUCTS_OBJECT}'), c.COLUMN_NAME, 'IsIdentity') AS IS_IDENTITY
     FROM INFORMATION_SCHEMA.COLUMNS c
-    WHERE c.TABLE_SCHEMA = 'dbo' AND c.TABLE_NAME = 'Productos'
+    WHERE c.TABLE_SCHEMA = '${ECOMMERCE_PRODUCTS_SCHEMA}' AND c.TABLE_NAME = '${ECOMMERCE_PRODUCTS_TABLE}'
     ORDER BY c.ORDINAL_POSITION
   `);
 
@@ -308,7 +333,7 @@ const buildProductosTemplatePayload = (columns: ProductosSchemaColumn[]) => {
   }
 
   return {
-    table: "dbo.Productos",
+    table: ECOMMERCE_PRODUCTS_OBJECT,
     sheetName: "Plantilla_Productos",
     columns: columns.map((column) => ({
       name: column.name,
@@ -329,7 +354,7 @@ const buildProductosInsertTemplatePayload = () => {
   }
 
   return {
-    table: "dbo.Productos",
+    table: ECOMMERCE_PRODUCTS_OBJECT,
     sheetName: "Plantilla_Productos",
     columns: PRODUCTOS_INSERT_TEMPLATE_COLUMNS.map((column) => ({
       name: column.name,
@@ -1081,6 +1106,59 @@ if (userCount.count === 0) {
 async function startServer() {
   let sqlPool: sql.ConnectionPool | null = null;
   let productosSchemaColumns: ProductosSchemaColumn[] = [];
+  let sapSyncInProgress = false;
+  const createRunId = () => `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
+  const calculateProgress = (processed: number, total: number) => {
+    if (!Number.isFinite(total) || total <= 0) return 0;
+    const pct = Math.round((Math.max(0, Math.min(processed, total)) / total) * 10000) / 100;
+    return Math.max(0, Math.min(100, pct));
+  };
+
+  const sapSyncMonitor: {
+    runId: string | null;
+    status: "idle" | "running" | "success" | "error";
+    phase: string;
+    startedAt: string | null;
+    endedAt: string | null;
+    updatedAt: string | null;
+    sourceMode: string | null;
+    sourceUrl: string | null;
+    targetTable: string;
+    batchSize: number;
+    totalFetched: number;
+    processed: number;
+    synced: number;
+    currentBatch: number;
+    totalBatches: number;
+    progressPct: number;
+    lockActive: boolean;
+    lastError: string | null;
+    lastResult: Record<string, any> | null;
+  } = {
+    runId: null,
+    status: "idle",
+    phase: "idle",
+    startedAt: null,
+    endedAt: null,
+    updatedAt: new Date().toISOString(),
+    sourceMode: null,
+    sourceUrl: null,
+    targetTable: ECOMMERCE_PRODUCTS_OBJECT,
+    batchSize: 0,
+    totalFetched: 0,
+    processed: 0,
+    synced: 0,
+    currentBatch: 0,
+    totalBatches: 0,
+    progressPct: 0,
+    lockActive: false,
+    lastError: null,
+    lastResult: null,
+  };
+
+  const updateSapSyncMonitor = (patch: Partial<typeof sapSyncMonitor>) => {
+    Object.assign(sapSyncMonitor, patch, { updatedAt: new Date().toISOString() });
+  };
 
   try {
     sqlPool = await new sql.ConnectionPool(sqlServerConfig).connect();
@@ -1105,17 +1183,26 @@ async function startServer() {
   };
 
   const idColumn = findColumnByCandidates(["id"]);
-  const activoColumn = findColumnByCandidates(["activo"]);
-  const fechaRegistroColumn = findColumnByCandidates(["fecharegistro", "fecha_registro", "fecha"]);
-  const importKeyColumn = findColumnByCandidates(["codbarras", "codigo", "codigoproducto", "codigoproduc", "sku"]);
-  const codigoProductoColumn = findColumnByCandidates(["codigoproduc", "codigoproducto", "codigo"]);
-  const codigoBarrasColumn = findColumnByCandidates(["codbarras", "codigobarras", "codbarra"]);
-  const nombreColumn = findColumnByCandidates(["nombre", "nombrecorto", "nombre_corto"]);
-  const descripcionColumn = findColumnByCandidates(["descripcion", "detalle", "descripcion_larga", "descripcionlarga"]);
-  const imagenColumn = findColumnByCandidates(["imagen", "foto", "image_url", "imageurl"]);
-  const precioUnidadColumn = findColumnByCandidates(["precio_unidad", "preciounidad", "unidad", "precio"]);
-  const stockColumn = findColumnByCandidates(["stock", "cantidadstock", "totalcantidad", "total_cantidad"]);
-  const grupoColumn = findColumnByCandidates(["grupo", "categoria", "categorianombre"]);
+  const activoColumn = findColumnByCandidates(["activo", "prducodestd"]);
+  const fechaRegistroColumn = findColumnByCandidates(["fecharegistro", "fecha_registro", "fecha", "prdufecrgis", "fechadeproceso"]);
+  const importKeyColumn = findColumnByCandidates(["codbarras", "codigo", "codigoproducto", "codigoproduc", "sku", "prducodbars", "prducodprdu"]);
+  const codigoProductoColumn = findColumnByCandidates(["codigoproduc", "codigoproducto", "codigo", "prducodprdu"]);
+  const codigoBarrasColumn = findColumnByCandidates(["codbarras", "codigobarras", "codbarra", "prducodbars"]);
+  const nombreColumn = findColumnByCandidates(["nombre", "nombrecorto", "nombre_corto", "prdunomprdu"]);
+  const descripcionColumn = findColumnByCandidates(["descripcion", "detalle", "descripcion_larga", "descripcionlarga", "prdudesprdu"]);
+  const imagenColumn = findColumnByCandidates(["imagen", "foto", "image_url", "imageurl", "prdurulimag"]);
+  const contenedorColumn = findColumnByCandidates(["contenedor", "container", "container_id", "prdunumctnd"]);
+  const empresaColumn = findColumnByCandidates(["empresa", "warehouse", "sede", "almacen", "prdunomempr"]);
+  const precioUnidadColumn = findColumnByCandidates(["precio_unidad", "preciounidad", "unidad", "precio", "preciounitario", "prdupreuntr", "ecuasolpunitario", "prdupreeuni"]);
+  const precioMayoristaColumn = findColumnByCandidates(["precio_mayorista", "preciomayorista", "preciopormayor", "prdupremyor", "ecuasolpmayor", "prdupreemyr"]);
+  const precioTarjetaColumn = findColumnByCandidates(["precio_tarjeta", "prdupretrjc", "ecuasolptarjeta", "prdupreetrj"]);
+  const precioBultoColumn = findColumnByCandidates(["precio_bulto", "preciobulto", "prdupreblto", "ecuasolpbulto", "prdupreeblt"]);
+  const precioDiferenciadoColumn = findColumnByCandidates(["precio_diferenciado", "prdupredifr", "ecuasolpdiferenciado", "prdupreedfr"]);
+  const precioOfertaColumn = findColumnByCandidates(["precio_oferta", "prdupreofrt", "ecuasolpoferta", "prdupreeofr"]);
+  const precioEspecialColumn = findColumnByCandidates(["precio_especial", "prdupreespl", "prduprelspl"]);
+  const listaChinaColumn = findColumnByCandidates(["lista_china", "prdupreluni", "listachina"]);
+  const stockColumn = findColumnByCandidates(["stock", "cantidadstock", "totalcantidad", "total_cantidad", "stocktotal", "prdustock"]);
+  const grupoColumn = findColumnByCandidates(["grupo", "categoria", "categorianombre", "prdutipgrup"]);
 
   const app = express();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
@@ -1127,6 +1214,1297 @@ async function startServer() {
   };
   app.use(express.json());
   const PORT = Number(process.env.PORT) || 7002;
+  const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:7000";
+  const SAP_CONFIG = {
+    enabled: process.env.SAP_SYNC_ENABLED === "true",
+    source: process.env.SAP_SOURCE || "generic_api",
+    productsUrl: process.env.SAP_PRODUCTS_URL || "",
+    apiKey: process.env.SAP_API_KEY || "",
+    apiKeyHeader: process.env.SAP_API_KEY_HEADER || "x-api-key",
+    bearerToken: process.env.SAP_BEARER_TOKEN || "",
+    pollMinutes: Number(process.env.SAP_SYNC_INTERVAL_MINUTES || "0"),
+    b1ServiceLayerUrl: process.env.SAP_B1_SERVICE_LAYER_URL || "",
+    b1CompanyDb: process.env.SAP_B1_COMPANY_DB || "",
+    b1Username: process.env.SAP_B1_USERNAME || "",
+    b1Password: process.env.SAP_B1_PASSWORD || "",
+    b1WarehouseCode: process.env.SAP_B1_WAREHOUSE_CODE || "",
+    b1PriceList: Number(process.env.SAP_B1_PRICE_LIST || "8"),
+    b1PriceStrict: process.env.SAP_B1_PRICE_STRICT !== "false",
+    b1FallbackPriceLists: ((process.env.SAP_B1_FALLBACK_PRICE_LISTS ?? "2,3").trim())
+      .split(",")
+      .map((value) => String(value).trim())
+      .filter((value) => value.length > 0)
+      .map((value) => Number(String(value).trim()))
+      .filter((value) => Number.isFinite(value)),
+    b1TruncateBeforeSync: process.env.SAP_B1_TRUNCATE_BEFORE_SYNC === "true",
+    b1DefaultContainer: process.env.SAP_B1_DEFAULT_CONTAINER || "2575",
+    b1DefaultImage: process.env.SAP_B1_DEFAULT_IMAGE || "https://picsum.photos/seed/1200/800/800",
+    b1PageSize: Number(process.env.SAP_B1_PAGE_SIZE || "100"),
+    b1PriceConcurrency: Number(process.env.SAP_B1_PRICE_CONCURRENCY || "10"),
+    b1ItemsFilter: process.env.SAP_B1_ITEMS_FILTER || "",
+    b1TlsInsecure: process.env.SAP_B1_TLS_INSECURE === "true",
+    b1SyncBatchSize: Number(process.env.SAP_B1_SYNC_BATCH_SIZE || "200"),
+  };
+
+  if (SAP_CONFIG.b1TlsInsecure) {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  }
+
+  const parseSapProductsFromPayload = (payload: any): Array<Record<string, any>> => {
+    if (Array.isArray(payload)) return payload as Array<Record<string, any>>;
+    if (!payload || typeof payload !== "object") return [];
+
+    const candidates = [payload.items, payload.data, payload.products, payload.result, payload.rows];
+    for (const candidate of candidates) {
+      if (Array.isArray(candidate)) return candidate as Array<Record<string, any>>;
+    }
+
+    return [];
+  };
+
+  const readSapValue = (row: Record<string, any>, keys: string[]) => {
+    for (const key of keys) {
+      if (row[key] !== undefined && row[key] !== null) return row[key];
+      const found = Object.keys(row).find((current) => current.toLowerCase() === key.toLowerCase());
+      if (found && row[found] !== undefined && row[found] !== null) return row[found];
+    }
+    return null;
+  };
+
+  const normalizeSapProduct = (row: Record<string, any>, index: number) => {
+    const code =
+      toText(readSapValue(row, ["codigo", "code", "sku", "itemcode", "material", "codbarras", "codigoproducto"])) ||
+      `SAP-AUTO-${Date.now()}-${index + 1}`;
+
+    const name =
+      toText(readSapValue(row, ["nombre", "name", "description", "descripcion", "itemname"])) ||
+      code;
+
+    return {
+      code,
+      barcode:
+        toText(readSapValue(row, ["codbarras", "codebars", "barcode", "bar_code", "barCode"])) ||
+        code,
+      container: toText(readSapValue(row, ["contenedor", "container", "container_id"])) || "2575",
+      company: toText(readSapValue(row, ["empresa", "warehouse", "sede", "almacen"])) || "",
+      name,
+      description:
+        toText(readSapValue(row, ["descripcion", "description", "detalle", "nombre", "name"])) ||
+        name,
+      stock: toNumber(readSapValue(row, ["stock", "cantidad", "existencia", "quantity", "onhand"]), 0),
+      cost: toNumber(readSapValue(row, ["costo", "cost", "costo_unitario", "movingaverageprice", "avgstdprice"]), 0),
+      price: toNumber(readSapValue(row, ["precio", "price", "precio_unidad", "price_unit", "listprice", "pricevalue", "movingaverageprice"]), 0),
+      priceMayorista: toNumber(readSapValue(row, ["precio_mayorista", "precio_por_mayor", "preciopormayor"]), 0),
+      priceTarjeta: toNumber(readSapValue(row, ["precio_tarjeta"]), 0),
+      priceBulto: toNumber(readSapValue(row, ["precio_bulto"]), 0),
+      priceDiferenciado: toNumber(readSapValue(row, ["precio_diferenciado"]), 0),
+      priceOferta: toNumber(readSapValue(row, ["precio_oferta"]), 0),
+      priceEspecial: toNumber(readSapValue(row, ["precio_especial"]), 0),
+      priceEcuasolUnitario: toNumber(readSapValue(row, ["ecuasol_p_unitario", "ecuasol_p_unit"]), 0),
+      priceEcuasolMayor: toNumber(readSapValue(row, ["ecuasol_p_mayor"]), 0),
+      priceEcuasolBulto: toNumber(readSapValue(row, ["ecuasol_p_bulto"]), 0),
+      priceEcuasolTarjeta: toNumber(readSapValue(row, ["ecuasol_p_tarjeta"]), 0),
+      priceEcuasolDiferenciado: toNumber(readSapValue(row, ["ecuasol_p_diferenciado"]), 0),
+      priceEcuasolOferta: toNumber(readSapValue(row, ["ecuasol_p_oferta"]), 0),
+      priceImpolinaUnitario: toNumber(readSapValue(row, ["impolina_p_unitario"]), 0),
+      priceImpolinaMayor: toNumber(readSapValue(row, ["impolina_p_mayor"]), 0),
+      priceImpolinaBulto: toNumber(readSapValue(row, ["impolina_p_bulto"]), 0),
+      priceImpolinaTarjeta: toNumber(readSapValue(row, ["impolina_p_tarjeta"]), 0),
+      priceImpolinaDiferenciado: toNumber(readSapValue(row, ["impolina_p_diferenciado"]), 0),
+      priceImpolinaOferta: toNumber(readSapValue(row, ["impolina_p_oferta"]), 0),
+      priceListaChina: toNumber(readSapValue(row, ["lista_china"]), 0),
+      active: toNumber(readSapValue(row, ["activo", "prdu_cod_estd"]), 1),
+      category:
+        toText(readSapValue(row, ["grupo", "categoria", "category", "linea", "family", "itemsgroupcode", "groupname"])) ||
+        "General",
+      image:
+        toText(readSapValue(row, ["imagen", "image", "image_url", "urlimagen"])) ||
+        buildGenericImageUrl(code),
+    };
+  };
+
+  const fetchSapB1ServiceLayerProducts = async () => {
+    if (!SAP_CONFIG.b1ServiceLayerUrl || !SAP_CONFIG.b1CompanyDb || !SAP_CONFIG.b1Username || !SAP_CONFIG.b1Password) {
+      throw new Error("Falta configurar SAP B1 Service Layer (URL, COMPANY_DB, USERNAME, PASSWORD).");
+    }
+
+    updateSapSyncMonitor({ phase: "fetching_sap" });
+
+    const serviceBase = SAP_CONFIG.b1ServiceLayerUrl.replace(/\/+$/, "");
+    const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...init, signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    const fetchWithRetry = async (
+      url: string,
+      init: RequestInit,
+      timeoutMs: number,
+      attempts: number,
+      context: string
+    ) => {
+      let lastError: any = null;
+      for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+          return await fetchWithTimeout(url, init, timeoutMs);
+        } catch (error: any) {
+          lastError = error;
+          if (attempt < attempts) {
+            await new Promise((resolve) => setTimeout(resolve, 1200));
+          }
+        }
+      }
+
+      throw new Error(
+        `${context}. No se pudo conectar con SAP B1 tras ${attempts} intentos: ${lastError?.message || "sin detalle"}`
+      );
+    };
+
+    updateSapSyncMonitor({ phase: "fetching_sap_login" });
+    const loginResponse = await fetchWithRetry(`${serviceBase}/Login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        CompanyDB: SAP_CONFIG.b1CompanyDb,
+        UserName: SAP_CONFIG.b1Username,
+        Password: SAP_CONFIG.b1Password,
+      }),
+    }, 20000, 3, "Error de login en SAP B1 Service Layer");
+
+    const loginRaw = await loginResponse.text();
+    if (!loginResponse.ok) {
+      throw new Error(`No se pudo autenticar en SAP B1 Service Layer (${loginResponse.status}): ${loginRaw.slice(0, 220)}`);
+    }
+
+    const headersAny = loginResponse.headers as any;
+    const setCookies: string[] =
+      typeof headersAny.getSetCookie === "function"
+        ? headersAny.getSetCookie()
+        : (() => {
+            const one = loginResponse.headers.get("set-cookie");
+            return one ? [one] : [];
+          })();
+
+    const cookieHeader = setCookies
+      .map((entry) => entry.split(";")[0])
+      .filter(Boolean)
+      .join("; ");
+
+    if (!cookieHeader) {
+      throw new Error("No se recibió cookie de sesión desde SAP B1 Service Layer.");
+    }
+
+    const allRows: Array<Record<string, any>> = [];
+
+    const itemGroupNameByCode = new Map<string, string>();
+    const warehouseNameByCode = new Map<string, string>();
+
+    const loadReferenceMap = async (
+      path: string,
+      getKey: (row: any) => string,
+      getValue: (row: any) => string,
+      target: Map<string, string>
+    ) => {
+      try {
+        const response = await fetchWithRetry(`${serviceBase}${path}`, {
+          method: "GET",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+        }, 20000, 2, `Error consultando catálogo auxiliar SAP (${path})`);
+
+        const raw = await response.text();
+        if (!response.ok) return;
+
+        const payload = JSON.parse(raw);
+        const rows = Array.isArray(payload?.value) ? payload.value : [];
+
+        for (const row of rows) {
+          const key = toText(getKey(row));
+          const value = toText(getValue(row));
+          if (key && value) {
+            target.set(key, value);
+          }
+        }
+      } catch {
+        // No bloquea la sincronización principal si no se puede resolver el nombre.
+      }
+    };
+
+    await loadReferenceMap(
+      "/ItemGroups?$select=Number,GroupName",
+      (row) => row?.Number,
+      (row) => row?.GroupName,
+      itemGroupNameByCode
+    );
+
+    await loadReferenceMap(
+      "/Warehouses?$select=WarehouseCode,WarehouseName",
+      (row) => row?.WarehouseCode,
+      (row) => row?.WarehouseName,
+      warehouseNameByCode
+    );
+
+    const executeSqlQuery = async (sqlCode: string, sqlText: string): Promise<Array<Record<string, any>>> => {
+      const escapedCode = encodeURIComponent(sqlCode);
+
+      try {
+        await fetchWithRetry(`${serviceBase}/SQLQueries('${escapedCode}')`, {
+          method: "DELETE",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+        }, 12000, 1, `No se pudo limpiar SQLQuery previa ${sqlCode}`);
+      } catch {
+        // Si no existe, se ignora.
+      }
+
+      const createSqlQuery = async () => {
+        updateSapSyncMonitor({ phase: "fetching_sap_prepare_query" });
+        const createResponse = await fetchWithRetry(`${serviceBase}/SQLQueries`, {
+          method: "POST",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            SqlCode: sqlCode,
+            SqlName: sqlCode,
+            SqlText: sqlText,
+          }),
+        }, 30000, 2, `Error creando SQLQuery ${sqlCode}`);
+
+        const createRaw = await createResponse.text();
+        if (!createResponse.ok) {
+          throw new Error(`No se pudo crear SQLQuery ${sqlCode} (${createResponse.status}): ${createRaw.slice(0, 260)}`);
+        }
+      };
+
+      await createSqlQuery();
+
+      const resultRows: Array<Record<string, any>> = [];
+      const pageSize = 500;
+      let skip = 0;
+      let guard = 0;
+      let recoverableRetries = 0;
+
+      while (guard < 10000) {
+        updateSapSyncMonitor({
+          phase: "fetching_sap_pages",
+          totalFetched: resultRows.length,
+        });
+
+        const pagePath = `SQLQueries('${escapedCode}')/List?$skip=${skip}&$top=${pageSize}`;
+        const pageResponse = await fetchWithRetry(`${serviceBase}/${pagePath}`, {
+          method: "POST",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }, 300000, 4, `Error ejecutando SQLQuery ${sqlCode}`);
+
+        const pageRaw = await pageResponse.text();
+        if (!pageResponse.ok) {
+          const lower = pageRaw.toLowerCase();
+          const isRecoverable =
+            lower.includes("connection down") ||
+            lower.includes("connection reset by peer") ||
+            lower.includes("system call 'recv' failed");
+
+          if (isRecoverable && recoverableRetries < 3) {
+            recoverableRetries += 1;
+            updateSapSyncMonitor({
+              phase: "fetching_sap_pages",
+              totalFetched: resultRows.length,
+            });
+            await new Promise((resolve) => setTimeout(resolve, 1500 * recoverableRetries));
+            continue;
+          }
+
+          if (isRecoverable && recoverableRetries >= 3) {
+            recoverableRetries = 0;
+            try {
+              await fetchWithRetry(`${serviceBase}/SQLQueries('${escapedCode}')`, {
+                method: "DELETE",
+                headers: {
+                  Cookie: cookieHeader,
+                  "Content-Type": "application/json",
+                },
+              }, 12000, 1, `No se pudo reiniciar SQLQuery ${sqlCode}`);
+            } catch {
+              // Si no existe, se ignora.
+            }
+            await createSqlQuery();
+            continue;
+          }
+
+          throw new Error(`No se pudo ejecutar SQLQuery ${sqlCode} (${pageResponse.status}): ${pageRaw.slice(0, 260)}`);
+        }
+
+        let pagePayload: any = null;
+        try {
+          pagePayload = JSON.parse(pageRaw);
+        } catch {
+          throw new Error(`Respuesta inválida ejecutando SQLQuery ${sqlCode}.`);
+        }
+
+        const rows = Array.isArray(pagePayload?.value) ? (pagePayload.value as Array<Record<string, any>>) : [];
+        if (rows.length === 0) {
+          break;
+        }
+
+        recoverableRetries = 0;
+        resultRows.push(...rows);
+        skip += rows.length;
+
+        updateSapSyncMonitor({
+          phase: "fetching_sap_pages",
+          totalFetched: resultRows.length,
+        });
+
+        guard += 1;
+      }
+
+      return resultRows;
+    };
+
+    const sqlCode = `COPILOT_SYNC_${Date.now()}`;
+    const defaultSqlText = `SELECT
+  CASE WHEN IFNULL(T0."CodeBars", '') = '' THEN '9999999' ELSE T0."CodeBars" END AS "prdu_cod_bars",
+  '${SAP_CONFIG.b1DefaultImage}' AS "prdu_rul_imag",
+  T0."ItemCode" AS "prdu_cod_prdu",
+  '${SAP_CONFIG.b1DefaultContainer}' AS "prdu_num_ctnd",
+  T0."ItemName" AS "prdu_nom_prdu",
+  T0."ItemName" AS "prdu_des_prdu",
+  T0."OnHand" AS "prdu_stock",
+  T0."AvgPrice" AS "prdu_costo",
+  IFNULL(P1."Price", 0) AS "prdu_pre_untr",
+  IFNULL(P2."Price", 0) AS "prdu_pre_myor",
+  IFNULL(P3."Price", 0) AS "prdu_pre_trjc",
+  IFNULL(P4."Price", 0) AS "prdu_pre_blto",
+  IFNULL(P5."Price", 0) AS "prdu_pre_difr",
+  IFNULL(P6."Price", 0) AS "prdu_pre_ofrt",
+  IFNULL(P7."Price", 0) AS "prdu_pre_espl",
+  IFNULL(P8."Price", 0) AS "prdu_pre_euni",
+  IFNULL(P9."Price", 0) AS "prdu_pre_emyr",
+  IFNULL(P10."Price", 0) AS "prdu_pre_eblt",
+  IFNULL(P11."Price", 0) AS "prdu_pre_etrj",
+  IFNULL(P12."Price", 0) AS "prdu_pre_edfr",
+  IFNULL(P13."Price", 0) AS "prdu_pre_eofr",
+  IFNULL(P14."Price", 0) AS "prdu_pre_luni",
+  IFNULL(P15."Price", 0) AS "prdu_pre_lmyr",
+  IFNULL(P16."Price", 0) AS "prdu_pre_lblt",
+  IFNULL(P17."Price", 0) AS "prdu_pre_ltrj",
+  IFNULL(P18."Price", 0) AS "prdu_pre_ldfr",
+  IFNULL(P19."Price", 0) AS "prdu_pre_lofr",
+  IFNULL(P20."Price", 0) AS "prdu_pre_chin",
+  (SELECT TOP 1 "CompnyName" FROM "OADM") AS "prdu_nom_empr",
+  T1."ItmsGrpNam" AS "prdu_tip_grup",
+  CASE WHEN T0."OnHand" > 0 THEN 1 ELSE 2 END AS "prdu_cod_estd",
+  T0."CreateDate" AS "prdu_fec_rgis"
+FROM "OITM" T0
+INNER JOIN "OITB" T1 ON T0."ItmsGrpCod" = T1."ItmsGrpCod"
+LEFT JOIN "ITM1" P1 ON T0."ItemCode" = P1."ItemCode" AND P1."PriceList" = 1
+LEFT JOIN "ITM1" P2 ON T0."ItemCode" = P2."ItemCode" AND P2."PriceList" = 2
+LEFT JOIN "ITM1" P3 ON T0."ItemCode" = P3."ItemCode" AND P3."PriceList" = 3
+LEFT JOIN "ITM1" P4 ON T0."ItemCode" = P4."ItemCode" AND P4."PriceList" = 4
+LEFT JOIN "ITM1" P5 ON T0."ItemCode" = P5."ItemCode" AND P5."PriceList" = 5
+LEFT JOIN "ITM1" P6 ON T0."ItemCode" = P6."ItemCode" AND P6."PriceList" = 6
+LEFT JOIN "ITM1" P7 ON T0."ItemCode" = P7."ItemCode" AND P7."PriceList" = 7
+LEFT JOIN "ITM1" P8 ON T0."ItemCode" = P8."ItemCode" AND P8."PriceList" = 8
+LEFT JOIN "ITM1" P9 ON T0."ItemCode" = P9."ItemCode" AND P9."PriceList" = 9
+LEFT JOIN "ITM1" P10 ON T0."ItemCode" = P10."ItemCode" AND P10."PriceList" = 10
+LEFT JOIN "ITM1" P11 ON T0."ItemCode" = P11."ItemCode" AND P11."PriceList" = 11
+LEFT JOIN "ITM1" P12 ON T0."ItemCode" = P12."ItemCode" AND P12."PriceList" = 12
+LEFT JOIN "ITM1" P13 ON T0."ItemCode" = P13."ItemCode" AND P13."PriceList" = 13
+LEFT JOIN "ITM1" P14 ON T0."ItemCode" = P14."ItemCode" AND P14."PriceList" = 14
+LEFT JOIN "ITM1" P15 ON T0."ItemCode" = P15."ItemCode" AND P15."PriceList" = 15
+LEFT JOIN "ITM1" P16 ON T0."ItemCode" = P16."ItemCode" AND P16."PriceList" = 16
+LEFT JOIN "ITM1" P17 ON T0."ItemCode" = P17."ItemCode" AND P17."PriceList" = 17
+LEFT JOIN "ITM1" P18 ON T0."ItemCode" = P18."ItemCode" AND P18."PriceList" = 18
+LEFT JOIN "ITM1" P19 ON T0."ItemCode" = P19."ItemCode" AND P19."PriceList" = 19
+LEFT JOIN "ITM1" P20 ON T0."ItemCode" = P20."ItemCode" AND P20."PriceList" = 20
+WHERE T0."SellItem" = 'Y'
+  AND T0."validFor" = 'Y'
+${SAP_B1_SQL_FILTER ? `  AND (${SAP_B1_SQL_FILTER})` : ""}
+ORDER BY T0."ItemCode"`;
+  const sqlText = SAP_B1_SQL_TEXT || defaultSqlText;
+
+    const queryRows = await executeSqlQuery(sqlCode, sqlText);
+    updateSapSyncMonitor({ phase: "fetching_sap_mapping", totalFetched: queryRows.length });
+
+    for (const row of queryRows) {
+      const codeRaw = toText(
+        readSapValue(row, [
+          "prdu_cod_prdu",
+          "CODIGOPRODUC",
+          "codigoproduc",
+          "ItemCode",
+        ])
+      );
+      const code = toText(codeRaw).trim();
+      if (!code) continue;
+
+      const sapPrice = (keys: string[], fallback = 0) => {
+        let firstNumeric: number | null = null;
+        for (const key of keys) {
+          const rawValue = readSapValue(row, [key]);
+          if (rawValue === null || rawValue === undefined) continue;
+          const textValue = toText(rawValue);
+          if (!textValue) continue;
+          const numericValue = Number(rawValue);
+          if (!Number.isFinite(numericValue)) continue;
+          if (firstNumeric === null) {
+            firstNumeric = numericValue;
+          }
+          if (numericValue > 0) {
+            return numericValue;
+          }
+        }
+
+        return firstNumeric !== null ? firstNumeric : fallback;
+      };
+
+      const stock = toNumber(readSapValue(row, ["prdu_stock", "STOCK_TOTAL", "STOCK", "stock"]), 0);
+      const groupCode = toText(readSapValue(row, ["GRUPO", "grupo", "prdu_tip_grup", "ItmsGrpCod", "ITMSGRPCOD"]));
+      const warehouseCode = toText(readSapValue(row, ["EMPRESA", "empresa"]));
+      const itemName = toText(readSapValue(row, ["prdu_nom_prdu", "NOMBRE", "nombre"])) || code;
+      const description = toText(readSapValue(row, ["prdu_des_prdu", "DESCRIPCION", "descripcion"])) || itemName;
+      const rawGroupName = toText(readSapValue(row, ["prdu_tip_grup", "ItmsGrpNam", "ITMSGRPNAM", "GRUPO", "grupo"]));
+      const rawCompanyName = toText(readSapValue(row, ["prdu_nom_empr", "CompnyName", "COMPNYNAME", "EMPRESA", "empresa"]));
+      const codBarras = toText(readSapValue(row, ["prdu_cod_bars", "CODBARRAS", "codbarras"])) || code;
+      const imageUrl =
+        toText(readSapValue(row, ["prdu_rul_imag", "IMAGEN", "imagen"])) || SAP_CONFIG.b1DefaultImage;
+      const container =
+        toText(readSapValue(row, ["prdu_num_ctnd", "CONTENEDOR", "contenedor"])) || SAP_CONFIG.b1DefaultContainer;
+      const activoValue = toNumber(readSapValue(row, ["prdu_cod_estd", "ACTIVO", "activo"]), stock > 0 ? 1 : 0);
+      const fechaProceso = readSapValue(row, ["prdu_fec_rgis", "FECHA_DE_PROCESO", "fecha_de_proceso"]);
+
+      const mappedGroupName = itemGroupNameByCode.get(groupCode) || "";
+      const groupLooksLikeCode = rawGroupName === groupCode || /^\d+$/.test(rawGroupName);
+      const normalizedGroupName =
+        mappedGroupName && groupLooksLikeCode
+          ? mappedGroupName
+          : rawGroupName || mappedGroupName || groupCode || "General";
+
+      const mappedCompanyName = warehouseNameByCode.get(warehouseCode) || "";
+      const companyLooksLikeCode = rawCompanyName === warehouseCode;
+      const normalizedCompanyName =
+        mappedCompanyName && companyLooksLikeCode
+          ? mappedCompanyName
+          : rawCompanyName || mappedCompanyName || warehouseCode || SAP_CONFIG.b1CompanyDb || "";
+
+      allRows.push({
+        codbarras: codBarras,
+        codigoproduc: code,
+        contenedor: container,
+        nombre: itemName,
+        descripcion: description,
+        stock,
+        costo: toNumber(readSapValue(row, ["prdu_costo", "COSTO", "costo"]), 0),
+        precio_unidad: sapPrice([
+          "prdu_pre_untr",
+          "PRECIO_UNITARIO",
+          "precio_unidad",
+          "prdu_pre_euni",
+          "ECUASOL_P_UNITARIO",
+          "ECUASOL P. UNITARIO",
+        ], 0),
+        precio_mayorista: sapPrice([
+          "prdu_pre_myor",
+          "PRECIO_POR_MAYOR",
+          "precio_mayorista",
+          "prdu_pre_emyr",
+          "ECUASOL_P_MAYOR",
+          "ECUASOL P. MAYOR",
+        ], 0),
+        precio_tarjeta: sapPrice([
+          "prdu_pre_trjc",
+          "PRECIO_TARJETA",
+          "precio_tarjeta",
+          "prdu_pre_etrj",
+          "ECUASOL_P_TARJETA",
+          "ECUASOL P. TARJETA",
+        ], 0),
+        precio_bulto: sapPrice([
+          "prdu_pre_blto",
+          "PRECIO_BULTO",
+          "precio_bulto",
+          "prdu_pre_eblt",
+          "ECUASOL_P_BULTO",
+          "ECUASOL P. BULTO",
+        ], 0),
+        precio_diferenciado: sapPrice([
+          "prdu_pre_edfr",
+          "ECUASOL_P_DIFERENCIADO",
+          "ECUASOL P. DIFERENCIADO",
+          "prdu_pre_difr",
+          "PRECIO_DIFERENCIADO",
+          "precio_diferenciado",
+        ], 0),
+        precio_oferta: sapPrice([
+          "prdu_pre_eofr",
+          "ECUASOL_P_OFERTA",
+          "ECUASOL P. OFERTA",
+          "prdu_pre_ofrt",
+          "PRECIO_OFERTA",
+          "precio_oferta",
+        ], 0),
+        precio_especial: sapPrice(["prdu_pre_espl", "PRECIO_ESPECIAL", "precio_especial"], 0),
+        ecuasol_p_unitario: sapPrice(["prdu_pre_euni", "ECUASOL_P_UNITARIO", "ECUASOL P. UNITARIO"], 0),
+        ecuasol_p_mayor: sapPrice(["prdu_pre_emyr", "ECUASOL_P_MAYOR", "ECUASOL P. MAYOR"], 0),
+        ecuasol_p_bulto: sapPrice(["prdu_pre_eblt", "ECUASOL_P_BULTO", "ECUASOL P. BULTO"], 0),
+        ecuasol_p_tarjeta: sapPrice(["prdu_pre_etrj", "ECUASOL_P_TARJETA", "ECUASOL P. TARJETA"], 0),
+        ecuasol_p_diferenciado: sapPrice([
+          "prdu_pre_edfr",
+          "ECUASOL_P_DIFERENCIADO",
+          "ECUASOL P. DIFERENCIADO",
+        ], 0),
+        ecuasol_p_oferta: sapPrice(["prdu_pre_eofr", "ECUASOL_P_OFERTA", "ECUASOL P. OFERTA"], 0),
+        impolina_p_unitario: sapPrice(["prdu_pre_luni", "IMPOLINA_P_UNITARIO", "IMPOLINA P. UNITARIO"], 0),
+        impolina_p_mayor: sapPrice(["prdu_pre_lmyr", "IMPOLINA_P_MAYOR", "IMPOLINA P. MAYOR"], 0),
+        impolina_p_bulto: sapPrice(["prdu_pre_lblt", "IMPOLINA_P_BULTO", "IMPOLINA P. BULTO"], 0),
+        impolina_p_tarjeta: sapPrice(["prdu_pre_ltrj", "IMPOLINA_P_TARJETA", "IMPOLINA P. TARJETA"], 0),
+        impolina_p_diferenciado: sapPrice([
+          "prdu_pre_ldfr",
+          "IMPOLINA_P_DIFERENCIADO",
+          "IMPOLINA P. DIFERENCIADO",
+        ], 0),
+        impolina_p_oferta: sapPrice(["prdu_pre_lofr", "IMPOLINA_P_OFERTA", "IMPOLINA P. OFERTA"], 0),
+        lista_china: sapPrice(["prdu_pre_chin", "LISTA_CHINA", "LISTA CHINA"], 0),
+        grupo: normalizedGroupName,
+        empresa: normalizedCompanyName,
+        activo: activoValue,
+        fecha_registro: fechaProceso,
+        imagen: imageUrl,
+      });
+    }
+
+    const mergeSapRowsByCode = (rows: Array<Record<string, any>>) => {
+      const byCode = new Map<string, Record<string, any>>();
+      const numericFields = [
+        "stock",
+        "costo",
+        "precio_unidad",
+        "precio_mayorista",
+        "precio_tarjeta",
+        "precio_bulto",
+        "precio_diferenciado",
+        "precio_oferta",
+        "precio_especial",
+        "ecuasol_p_unitario",
+        "ecuasol_p_mayor",
+        "ecuasol_p_bulto",
+        "ecuasol_p_tarjeta",
+        "ecuasol_p_diferenciado",
+        "ecuasol_p_oferta",
+        "impolina_p_unitario",
+        "impolina_p_mayor",
+        "impolina_p_bulto",
+        "impolina_p_tarjeta",
+        "impolina_p_diferenciado",
+        "impolina_p_oferta",
+        "lista_china",
+      ];
+
+      for (const row of rows) {
+        const key = toText(row?.codigoproduc || row?.codigo || row?.codbarras).trim().toUpperCase();
+        if (!key) continue;
+
+        const current = byCode.get(key);
+        if (!current) {
+          byCode.set(key, { ...row });
+          continue;
+        }
+
+        for (const field of numericFields) {
+          const a = toNumber(current[field], 0);
+          const b = toNumber(row[field], 0);
+          if (b > a) {
+            current[field] = b;
+          }
+        }
+
+        const textFields = ["codbarras", "nombre", "descripcion", "contenedor", "empresa", "grupo", "imagen"];
+        for (const field of textFields) {
+          const a = toText(current[field]);
+          const b = toText(row[field]);
+          if (!a && b) {
+            current[field] = b;
+          }
+        }
+
+        if (!current.fecha_registro && row.fecha_registro) {
+          current.fecha_registro = row.fecha_registro;
+        }
+
+        byCode.set(key, current);
+      }
+
+      return Array.from(byCode.values());
+    };
+
+    try {
+      await fetchWithTimeout(`${serviceBase}/Logout`, {
+        method: "POST",
+        headers: {
+          Cookie: cookieHeader,
+          "Content-Type": "application/json",
+        },
+      }, 10000);
+    } catch {
+      // Si logout falla no bloquea la sincronización.
+    }
+
+    const mergedRows = mergeSapRowsByCode(allRows);
+
+    return {
+      sourceUrl: `${serviceBase}/Items`,
+      sapRows: mergedRows,
+      rawSapRowCount: allRows.length,
+      uniqueSapRowCount: mergedRows.length,
+    };
+  };
+
+  const syncProductsFromSap = async (sourceUrlOverride?: string, sourceModeOverride?: string) => {
+    if (!sqlPool) {
+      throw new Error("SQL Server no disponible para sincronización SAP.");
+    }
+
+    const mode = toText(sourceModeOverride || SAP_CONFIG.source || "generic_api").toLowerCase();
+    updateSapSyncMonitor({
+      sourceMode: mode,
+      phase: "fetching_sap",
+    });
+
+    let sourceUrl = "";
+    let sapRows: Array<Record<string, any>> = [];
+    let rawFetched = 0;
+    let uniqueFetched = 0;
+
+    if (mode === "sap_b1_service_layer") {
+      const b1Result = await fetchSapB1ServiceLayerProducts();
+      sourceUrl = b1Result.sourceUrl;
+      sapRows = b1Result.sapRows;
+      rawFetched = Number(b1Result.rawSapRowCount || 0);
+      uniqueFetched = Number(b1Result.uniqueSapRowCount || sapRows.length || 0);
+      updateSapSyncMonitor({
+        totalFetched: uniqueFetched,
+      });
+
+      sapRows = Array.isArray(sapRows) ? sapRows : [];
+    } else {
+      sourceUrl = sourceUrlOverride || SAP_CONFIG.productsUrl;
+      if (!sourceUrl) {
+        throw new Error("SAP_PRODUCTS_URL no está configurado.");
+      }
+
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      if (SAP_CONFIG.apiKey) {
+        headers[SAP_CONFIG.apiKeyHeader] = SAP_CONFIG.apiKey;
+      }
+
+      if (SAP_CONFIG.bearerToken) {
+        headers.Authorization = `Bearer ${SAP_CONFIG.bearerToken}`;
+      }
+
+      const response = await fetch(sourceUrl, {
+        method: "GET",
+        headers,
+      });
+
+      const raw = await response.text();
+      if (!response.ok) {
+        throw new Error(`SAP API respondió ${response.status}: ${raw.slice(0, 300)}`);
+      }
+
+      let payload: any = null;
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        throw new Error("La respuesta de SAP no es JSON válido.");
+      }
+
+      sapRows = parseSapProductsFromPayload(payload);
+      rawFetched = sapRows.length;
+      uniqueFetched = sapRows.length;
+    }
+
+    if (rawFetched <= 0) rawFetched = sapRows.length;
+    if (uniqueFetched <= 0) uniqueFetched = sapRows.length;
+
+    updateSapSyncMonitor({
+      sourceUrl: sourceUrl || null,
+    });
+
+    if (sapRows.length === 0) {
+      updateSapSyncMonitor({
+        phase: "completed",
+        totalFetched: 0,
+        processed: 0,
+        synced: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+        progressPct: 100,
+      });
+      return {
+        sourceUrl,
+        mode,
+        fetched: 0,
+        synced: 0,
+      };
+    }
+
+    let synced = 0;
+    const insertOnlyMode = mode === "sap_b1_service_layer" && SAP_CONFIG.b1TruncateBeforeSync;
+    const batchSize = Math.max(100, Math.min(200, SAP_CONFIG.b1SyncBatchSize || 200));
+    const tx = insertOnlyMode ? null : new sql.Transaction(sqlPool);
+    const totalBatches = Math.ceil(sapRows.length / batchSize);
+
+    updateSapSyncMonitor({
+      phase: insertOnlyMode ? "truncate_target" : "upsert_target",
+      batchSize,
+      totalFetched: sapRows.length,
+      processed: 0,
+      synced: 0,
+      currentBatch: 0,
+      totalBatches,
+      progressPct: 0,
+    });
+
+    if (tx) {
+      await tx.begin();
+    }
+
+    try {
+      if (insertOnlyMode) {
+        await sqlPool.request().query(`DELETE FROM ${ECOMMERCE_PRODUCTS_SQL};`);
+      }
+
+      for (let batchStart = 0; batchStart < sapRows.length; batchStart += batchSize) {
+        const batchRows = sapRows.slice(batchStart, batchStart + batchSize);
+        const currentBatch = Math.floor(batchStart / batchSize) + 1;
+        updateSapSyncMonitor({
+          phase: "writing_sql",
+          currentBatch,
+          totalBatches,
+        });
+        if (batchStart === 0 || batchStart % (batchSize * 10) === 0) {
+          console.log(`[SAP SYNC] Procesando lote ${Math.floor(batchStart / batchSize) + 1} (${batchStart}/${sapRows.length})`);
+        }
+
+        for (let batchIndex = 0; batchIndex < batchRows.length; batchIndex += 1) {
+          const rowIndex = batchStart + batchIndex;
+          const normalized = normalizeSapProduct(batchRows[batchIndex], rowIndex);
+
+          const valuesByColumn = new Map<string, any>();
+
+          const setColumnValue = (column: ProductosSchemaColumn | null, value: any) => {
+            if (!column) return;
+            valuesByColumn.set(column.name, toSqlColumnValue(value, column));
+          };
+
+          setColumnValue(importKeyColumn, normalized.code);
+          setColumnValue(codigoProductoColumn, normalized.code);
+          setColumnValue(codigoBarrasColumn, normalized.barcode || normalized.code);
+          setColumnValue(contenedorColumn, normalized.container);
+          setColumnValue(nombreColumn, normalized.name);
+          setColumnValue(descripcionColumn, normalized.description);
+          setColumnValue(imagenColumn, normalized.image);
+          setColumnValue(precioUnidadColumn, normalized.price);
+          setColumnValue(precioMayoristaColumn, normalized.priceMayorista);
+          setColumnValue(precioTarjetaColumn, normalized.priceTarjeta);
+          setColumnValue(precioBultoColumn, normalized.priceBulto);
+          setColumnValue(precioDiferenciadoColumn, normalized.priceDiferenciado);
+          setColumnValue(precioOfertaColumn, normalized.priceOferta);
+          setColumnValue(precioEspecialColumn, normalized.priceEspecial);
+          setColumnValue(listaChinaColumn, normalized.priceListaChina);
+          setColumnValue(stockColumn, normalized.stock);
+          setColumnValue(empresaColumn, normalized.company);
+          setColumnValue(grupoColumn, normalized.category);
+          setColumnValue(activoColumn, normalized.active > 0 ? 1 : 0);
+          setColumnValue(fechaRegistroColumn, new Date());
+
+          for (const schemaColumn of productosSchemaColumns) {
+            if (schemaColumn.isIdentity) continue;
+            if (schemaColumn.isNullable) continue;
+            if (schemaColumn.hasDefault) continue;
+
+            const currentValue = valuesByColumn.get(schemaColumn.name);
+            const needsFallback =
+              !valuesByColumn.has(schemaColumn.name) ||
+              currentValue === null ||
+              currentValue === undefined ||
+              toText(currentValue) === "";
+
+            if (!needsFallback) continue;
+
+            const fallbackValue = getRequiredFallbackValue(schemaColumn);
+            if (fallbackValue !== null && fallbackValue !== undefined) {
+              valuesByColumn.set(schemaColumn.name, fallbackValue);
+            }
+          }
+
+          const insertEntries = Array.from(valuesByColumn.entries()).filter(([columnName, value]) => {
+            const column = productosSchemaColumns.find((col) => col.name === columnName);
+            if (!column || column.isIdentity) return false;
+            return value !== undefined;
+          });
+
+          if (insertEntries.length === 0) continue;
+
+          const request = tx ? new sql.Request(tx) : sqlPool.request();
+          insertEntries.forEach(([_, value], entryIndex) => {
+            request.input(`p${entryIndex}`, value);
+          });
+
+          if (insertOnlyMode) {
+            const insertColumnsClause = insertEntries.map(([columnName]) => `[${columnName}]`).join(", ");
+            const insertValuesClause = insertEntries.map((_, entryIndex) => `@p${entryIndex}`).join(", ");
+            await request.query(`
+              INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
+              VALUES (${insertValuesClause});
+            `);
+            synced += 1;
+            continue;
+          }
+
+          const upsertKeyColumn = importKeyColumn || codigoProductoColumn || codigoBarrasColumn;
+          if (upsertKeyColumn) {
+            const keyEntry = insertEntries.find(([columnName]) => columnName === upsertKeyColumn.name);
+            if (keyEntry && keyEntry[1] !== null && keyEntry[1] !== undefined && toText(keyEntry[1]) !== "") {
+              request.input("upsertKey", keyEntry[1]);
+
+              const updateEntries = insertEntries.filter(([columnName]) => columnName !== upsertKeyColumn.name);
+              const updateSetClause = updateEntries
+                .map(([columnName]) => {
+                  const idx = insertEntries.findIndex(([entryName]) => entryName === columnName);
+                  return `[${columnName}] = @p${idx}`;
+                })
+                .join(",\n                      ");
+
+              const insertColumnsClause = insertEntries.map(([columnName]) => `[${columnName}]`).join(", ");
+              const insertValuesClause = insertEntries.map((_, entryIndex) => `@p${entryIndex}`).join(", ");
+
+              if (updateEntries.length > 0) {
+                await request.query(`
+                  IF EXISTS (SELECT 1 FROM ${ECOMMERCE_PRODUCTS_SQL} WHERE [${upsertKeyColumn.name}] = @upsertKey)
+                  BEGIN
+                    UPDATE ${ECOMMERCE_PRODUCTS_SQL}
+                    SET ${updateSetClause}
+                    WHERE [${upsertKeyColumn.name}] = @upsertKey;
+                  END
+                  ELSE
+                  BEGIN
+                    INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
+                    VALUES (${insertValuesClause});
+                  END
+                `);
+              } else {
+                await request.query(`
+                  IF NOT EXISTS (SELECT 1 FROM ${ECOMMERCE_PRODUCTS_SQL} WHERE [${upsertKeyColumn.name}] = @upsertKey)
+                  BEGIN
+                    INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
+                    VALUES (${insertValuesClause});
+                  END
+                `);
+              }
+
+              synced += 1;
+              continue;
+            }
+          }
+
+          const insertColumnsClause = insertEntries.map(([columnName]) => `[${columnName}]`).join(", ");
+          const insertValuesClause = insertEntries.map((_, entryIndex) => `@p${entryIndex}`).join(", ");
+          await request.query(`
+            INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
+            VALUES (${insertValuesClause});
+          `);
+          synced += 1;
+        }
+
+        const processed = Math.min(batchStart + batchRows.length, sapRows.length);
+        updateSapSyncMonitor({
+          processed,
+          synced,
+          progressPct: calculateProgress(processed, sapRows.length),
+        });
+      }
+
+      if (tx) {
+        await tx.commit();
+      }
+    } catch (error) {
+      if (tx) {
+        await tx.rollback();
+      }
+      throw error;
+    }
+
+    return {
+      sourceUrl,
+      mode,
+      fetched: sapRows.length,
+      synced,
+      batchSize,
+      rawFetched,
+      uniqueFetched,
+    };
+  };
+
+  const PLACETOPAY_CONFIG = {
+    login: process.env.PLACETOPAY_LOGIN || "",
+    tranKey: process.env.PLACETOPAY_TRANKEY || "",
+    baseUrl: process.env.PLACETOPAY_BASE_URL || "https://test.placetopay.com/redirection",
+    locale: process.env.PLACETOPAY_LOCALE || "es_EC",
+  };
+
+  const buildPlaceToPayAuth = () => {
+    const nonceRaw = randomBytes(16);
+    const nonce = nonceRaw.toString("base64");
+    const seed = new Date().toISOString();
+    const tranKey = createHash("sha1")
+      .update(Buffer.concat([nonceRaw, Buffer.from(seed + PLACETOPAY_CONFIG.tranKey)]))
+      .digest("base64");
+
+    return {
+      login: PLACETOPAY_CONFIG.login,
+      tranKey,
+      nonce,
+      seed,
+    };
+  };
+
+  const parsePlaceToPayStatus = (payload: any): string => {
+    const status = payload?.status?.status;
+    if (status && typeof status === "string") return status.toUpperCase();
+    return "UNKNOWN";
+  };
+
+  app.post("/api/payments/placetopay/session", async (req, res) => {
+    if (!PLACETOPAY_CONFIG.login || !PLACETOPAY_CONFIG.tranKey) {
+      return res.status(503).json({ error: "PlaceToPay no está configurado en el backend." });
+    }
+
+    const {
+      order_id,
+      order_number,
+      amount,
+      buyer,
+      return_url,
+    } = req.body || {};
+
+    if (!order_id || !order_number || !amount) {
+      return res.status(400).json({ error: "Faltan datos para iniciar el pago en PlaceToPay." });
+    }
+
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return res.status(400).json({ error: "Monto inválido para PlaceToPay." });
+    }
+
+    try {
+      const requestBody = {
+        auth: buildPlaceToPayAuth(),
+        locale: PLACETOPAY_CONFIG.locale,
+        payment: {
+          reference: String(order_number),
+          description: `Compra Cony Importadora - ${String(order_number)}`,
+          amount: {
+            currency: "USD",
+            total: Number(normalizedAmount.toFixed(2)),
+          },
+        },
+        expiration: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        returnUrl:
+          return_url ||
+          `${FRONTEND_URL}/carrito?ptp_return=1&order_id=${encodeURIComponent(String(order_id))}&order_number=${encodeURIComponent(
+            String(order_number)
+          )}`,
+        ipAddress: req.ip || "127.0.0.1",
+        userAgent: req.get("user-agent") || "CONY-Frontend",
+        buyer: {
+          name: buyer?.name || "Cliente",
+          surname: buyer?.surname || "Cony",
+          email: buyer?.email || "cliente@cony.local",
+          mobile: buyer?.mobile || "0000000000",
+          address: {
+            street: buyer?.address || "Sin direccion",
+            city: buyer?.city || "Quito",
+            country: "EC",
+          },
+        },
+      };
+
+      const response = await fetch(`${PLACETOPAY_CONFIG.baseUrl}/api/session`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      const raw = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { raw };
+      }
+
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: "No se pudo crear sesión de pago en PlaceToPay.",
+          placetopay_response: data,
+        });
+      }
+
+      return res.json({
+        requestId: data?.requestId,
+        processUrl: data?.processUrl,
+        status: data?.status || null,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "Error creando sesión PlaceToPay." });
+    }
+  });
+
+  app.post("/api/payments/placetopay/status", async (req, res) => {
+    if (!PLACETOPAY_CONFIG.login || !PLACETOPAY_CONFIG.tranKey) {
+      return res.status(503).json({ error: "PlaceToPay no está configurado en el backend." });
+    }
+
+    const { requestId } = req.body || {};
+    if (!requestId) {
+      return res.status(400).json({ error: "requestId es requerido." });
+    }
+
+    try {
+      const response = await fetch(`${PLACETOPAY_CONFIG.baseUrl}/api/session/${encodeURIComponent(String(requestId))}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ auth: buildPlaceToPayAuth() }),
+      });
+
+      const raw = await response.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = { raw };
+      }
+
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: "No se pudo consultar estado en PlaceToPay.",
+          placetopay_response: data,
+        });
+      }
+
+      return res.json({
+        approved: parsePlaceToPayStatus(data) === "APPROVED",
+        status: data?.status || null,
+        request: data?.request || null,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "Error consultando estado PlaceToPay." });
+    }
+  });
+
+  app.get("/api/ecommerce/sap/sync-config", (req, res) => {
+    res.json({
+      enabled: SAP_CONFIG.enabled,
+      source: SAP_CONFIG.source,
+      productsUrlConfigured: Boolean(SAP_CONFIG.productsUrl),
+      apiKeyConfigured: Boolean(SAP_CONFIG.apiKey),
+      bearerTokenConfigured: Boolean(SAP_CONFIG.bearerToken),
+      b1ServiceLayerConfigured: Boolean(SAP_CONFIG.b1ServiceLayerUrl),
+      b1CompanyConfigured: Boolean(SAP_CONFIG.b1CompanyDb),
+      b1UsernameConfigured: Boolean(SAP_CONFIG.b1Username),
+      b1WarehouseCode: SAP_CONFIG.b1WarehouseCode || null,
+      b1PriceList: SAP_CONFIG.b1PriceList,
+      b1PriceStrict: SAP_CONFIG.b1PriceStrict,
+      b1FallbackPriceLists: SAP_CONFIG.b1FallbackPriceLists,
+      b1TruncateBeforeSync: SAP_CONFIG.b1TruncateBeforeSync,
+      b1DefaultContainer: SAP_CONFIG.b1DefaultContainer,
+      b1DefaultImage: SAP_CONFIG.b1DefaultImage,
+      b1PriceConcurrency: SAP_CONFIG.b1PriceConcurrency,
+      b1ItemsFilter: SAP_CONFIG.b1ItemsFilter || null,
+      b1TlsInsecure: SAP_CONFIG.b1TlsInsecure,
+      b1SyncBatchSize: SAP_CONFIG.b1SyncBatchSize,
+      targetTable: ECOMMERCE_PRODUCTS_OBJECT,
+      pollMinutes: SAP_CONFIG.pollMinutes,
+    });
+  });
+
+  app.get("/api/ecommerce/sap/sync-monitor", async (req, res) => {
+    try {
+      let targetCount: number | null = null;
+      if (sqlPool) {
+        const countResult = await sqlPool.request().query(`SELECT COUNT(1) AS total FROM ${ECOMMERCE_PRODUCTS_SQL}`);
+        targetCount = Number(countResult.recordset?.[0]?.total || 0);
+      }
+
+      const nowMs = Date.now();
+      const startedMs = sapSyncMonitor.startedAt ? Date.parse(sapSyncMonitor.startedAt) : NaN;
+      const updatedMs = sapSyncMonitor.updatedAt ? Date.parse(sapSyncMonitor.updatedAt) : NaN;
+      const elapsedSeconds = Number.isFinite(startedMs) ? Math.max(0, Math.floor((nowMs - startedMs) / 1000)) : null;
+      const staleSeconds = Number.isFinite(updatedMs) ? Math.max(0, Math.floor((nowMs - updatedMs) / 1000)) : null;
+      const isStalled = Boolean(
+        sapSyncInProgress &&
+        sapSyncMonitor.status === "running" &&
+        sapSyncMonitor.phase === "fetching_sap" &&
+        staleSeconds !== null &&
+        staleSeconds > 120
+      );
+
+      const phaseHints: Record<string, string> = {
+        idle: "Sin ejecución activa.",
+        starting: "Preparando sincronización.",
+        fetching_sap: "Consultando SAP Service Layer (lectura de datos fuente).",
+        fetching_sap_pages: "Leyendo paginas de SAP Service Layer.",
+        fetching_sap_mapping: "Normalizando columnas recibidas desde SAP.",
+        truncate_target: "Limpiando tabla destino antes de la carga.",
+        writing_sql: "Insertando/actualizando lotes en SQL Server.",
+        upsert_target: "Sincronizando con estrategia upsert en SQL Server.",
+        completed: "Sincronización completada.",
+        error: "La sincronización terminó con error.",
+      };
+      const phaseMessage = phaseHints[sapSyncMonitor.phase] || "Fase no mapeada.";
+
+      return res.json({
+        ...sapSyncMonitor,
+        lockActive: sapSyncInProgress,
+        targetCount,
+        targetTable: ECOMMERCE_PRODUCTS_OBJECT,
+        elapsedSeconds,
+        staleSeconds,
+        isStalled,
+        phaseMessage,
+      });
+    } catch (e: any) {
+      return res.status(500).json({
+        error: e?.message || "No se pudo obtener el monitor de sincronización SAP.",
+      });
+    }
+  });
+
+  app.post("/api/ecommerce/sap/sync", async (req, res) => {
+    if (!sqlPool) {
+      return res.status(503).json({ error: "SQL Server no disponible para sincronizar SAP." });
+    }
+
+    if (sapSyncInProgress) {
+      return res.status(409).json({ error: "Ya hay una sincronización SAP en ejecución. Espera a que termine." });
+    }
+
+    try {
+      sapSyncInProgress = true;
+      updateSapSyncMonitor({
+        runId: createRunId(),
+        status: "running",
+        phase: "starting",
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        sourceMode: toText(req.body?.source_mode || SAP_CONFIG.source || "").toLowerCase() || null,
+        sourceUrl: toText(req.body?.source_url || SAP_CONFIG.productsUrl || SAP_CONFIG.b1ServiceLayerUrl || "") || null,
+        targetTable: ECOMMERCE_PRODUCTS_OBJECT,
+        batchSize: Math.max(100, Math.min(200, SAP_CONFIG.b1SyncBatchSize || 200)),
+        totalFetched: 0,
+        processed: 0,
+        synced: 0,
+        currentBatch: 0,
+        totalBatches: 0,
+        progressPct: 0,
+        lockActive: true,
+        lastError: null,
+        lastResult: null,
+      });
+      const sourceUrl = toText(req.body?.source_url);
+      const sourceMode = toText(req.body?.source_mode);
+      const result = await syncProductsFromSap(sourceUrl || undefined, sourceMode || undefined);
+      updateSapSyncMonitor({
+        status: "success",
+        phase: "completed",
+        endedAt: new Date().toISOString(),
+        processed: Number(result.fetched || 0),
+        synced: Number(result.synced || 0),
+        progressPct: 100,
+        lockActive: false,
+        lastResult: result,
+      });
+      return res.json({ success: true, ...result });
+    } catch (e: any) {
+      updateSapSyncMonitor({
+        status: "error",
+        phase: "error",
+        endedAt: new Date().toISOString(),
+        lockActive: false,
+        lastError: e?.message || "No se pudo sincronizar SAP.",
+        lastResult: null,
+      });
+      return res.status(500).json({
+        error: e?.message || "No se pudo sincronizar SAP.",
+      });
+    } finally {
+      sapSyncInProgress = false;
+      updateSapSyncMonitor({ lockActive: false });
+    }
+  });
+
+  if (SAP_CONFIG.enabled && Number.isFinite(SAP_CONFIG.pollMinutes) && SAP_CONFIG.pollMinutes > 0) {
+    const intervalMs = Math.max(1, SAP_CONFIG.pollMinutes) * 60 * 1000;
+
+    setTimeout(async () => {
+      if (sapSyncInProgress) {
+        console.log("[SAP SYNC] Primera sincronización omitida: ya hay una en ejecución.");
+        return;
+      }
+
+      try {
+        sapSyncInProgress = true;
+        const result = await syncProductsFromSap();
+        console.log("[SAP SYNC] Primera sincronización completada:", result);
+      } catch (error) {
+        console.error("[SAP SYNC] Error en primera sincronización:", error);
+      } finally {
+        sapSyncInProgress = false;
+      }
+    }, 15_000);
+
+    setInterval(async () => {
+      if (sapSyncInProgress) {
+        console.log("[SAP SYNC] Sincronización omitida: aún hay una en ejecución.");
+        return;
+      }
+
+      try {
+        sapSyncInProgress = true;
+        const result = await syncProductsFromSap();
+        console.log("[SAP SYNC] Sincronización completada:", result);
+      } catch (error) {
+        console.error("[SAP SYNC] Error en sincronización:", error);
+      } finally {
+        sapSyncInProgress = false;
+      }
+    }, intervalMs);
+  }
 
   app.get("/api/health", (req, res) => {
     res.json({ ok: true, service: "backend", port: PORT, sqlServerConnected: !!sqlPool });
@@ -1142,6 +2520,12 @@ async function startServer() {
 
   app.get("/api/ecommerce/productos", async (req, res) => {
     try {
+      const q = toText(req.query.q).trim();
+      const requestedLimit = Number(toText(req.query.limit) || "0");
+      const requestedOffset = Number(toText(req.query.offset) || "0");
+      const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(1000, requestedLimit) : 0;
+      const offset = Number.isFinite(requestedOffset) && requestedOffset > 0 ? requestedOffset : 0;
+
       if (!sqlPool) {
         const sqliteProducts = db
           .prepare(
@@ -1157,28 +2541,128 @@ async function startServer() {
           image_url: string;
         }>;
 
-        return res.json(
-          sqliteProducts.map((product) => ({
-            Id: product.id,
-            Imagen: product.image_url,
-            Codigo: product.internal_code,
-            Unidad: product.name,
-            TotalCantidad: product.stock,
-            Costo: product.cost,
-            Mayorista: product.price,
-            PrecioUnidad: product.price,
-            Activo: 1,
-          }))
-        );
+        const mappedRows = sqliteProducts.map((product) => ({
+          Id: product.id,
+          Imagen: product.image_url,
+          Codigo: product.internal_code,
+          Unidad: product.name,
+          TotalCantidad: product.stock,
+          Costo: product.cost,
+          Mayorista: product.price,
+          PrecioUnidad: product.price,
+          Activo: 1,
+        }));
+
+        const filteredRows = q
+          ? mappedRows.filter((row) =>
+              [row.Codigo, row.Unidad].some((value) => toText(value).toLowerCase().includes(q.toLowerCase()))
+            )
+          : mappedRows;
+
+        if (limit > 0) {
+          const paged = filteredRows.slice(offset, offset + limit);
+          return res.json({
+            items: paged,
+            total: filteredRows.length,
+            limit,
+            offset,
+          });
+        }
+
+        return res.json(filteredRows);
       }
 
-      const activeFilter = activoColumn ? `WHERE [${activoColumn.name}] = 1` : "";
-      const orderBy = idColumn ? `ORDER BY [${idColumn.name}] DESC` : "";
-      const result = await sqlPool.request().query(`SELECT * FROM dbo.Productos ${activeFilter} ${orderBy}`);
+      const conditions: string[] = [];
+      if (activoColumn) {
+        conditions.push(`[${activoColumn.name}] = 1`);
+      }
 
+      const searchColumns = [codigoProductoColumn, codigoBarrasColumn, nombreColumn, descripcionColumn].filter(
+        (column): column is ProductosSchemaColumn => Boolean(column)
+      );
+
+      if (q && searchColumns.length > 0) {
+        conditions.push(`(${searchColumns.map((column) => `[${column.name}] LIKE @search`).join(" OR ")})`);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const orderBy = idColumn ? `ORDER BY [${idColumn.name}] DESC` : "ORDER BY (SELECT NULL)";
+
+      if (limit > 0) {
+        const countRequest = sqlPool.request();
+        const listRequest = sqlPool.request();
+
+        if (q) {
+          countRequest.input("search", `%${q}%`);
+          listRequest.input("search", `%${q}%`);
+        }
+
+        listRequest.input("offset", offset);
+        listRequest.input("limit", limit);
+
+        const countResult = await countRequest.query(`SELECT COUNT(1) AS total FROM ${ECOMMERCE_PRODUCTS_SQL} ${whereClause}`);
+        const total = Number(countResult.recordset?.[0]?.total || 0);
+
+        const listResult = await listRequest.query(
+          `SELECT * FROM ${ECOMMERCE_PRODUCTS_SQL} ${whereClause} ${orderBy} OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`
+        );
+
+        return res.json({
+          items: listResult.recordset,
+          total,
+          limit,
+          offset,
+        });
+      }
+
+      const request = sqlPool.request();
+      if (q) {
+        request.input("search", `%${q}%`);
+      }
+
+      const result = await request.query(`SELECT * FROM ${ECOMMERCE_PRODUCTS_SQL} ${whereClause} ${orderBy}`);
       res.json(result.recordset);
     } catch (e: any) {
       res.status(500).json({ error: e.message || "No se pudo consultar Productos en SQL Server." });
+    }
+  });
+
+  app.get("/api/ecommerce/grupos", async (req, res) => {
+    try {
+      if (!sqlPool || !grupoColumn) {
+        return res.json({ items: [] });
+      }
+
+      const conditions: string[] = [];
+      if (activoColumn) {
+        conditions.push(`[${activoColumn.name}] = 1`);
+      }
+
+      conditions.push(`[${grupoColumn.name}] IS NOT NULL`);
+      conditions.push(`LTRIM(RTRIM(CONVERT(NVARCHAR(255), [${grupoColumn.name}]))) <> ''`);
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const result = await sqlPool.request().query(`
+        SELECT
+          CONVERT(NVARCHAR(255), [${grupoColumn.name}]) AS grupo,
+          COUNT(1) AS total
+        FROM ${ECOMMERCE_PRODUCTS_SQL}
+        ${whereClause}
+        GROUP BY CONVERT(NVARCHAR(255), [${grupoColumn.name}])
+        ORDER BY
+          CASE WHEN TRY_CONVERT(INT, CONVERT(NVARCHAR(255), [${grupoColumn.name}])) IS NULL THEN 1 ELSE 0 END,
+          TRY_CONVERT(INT, CONVERT(NVARCHAR(255), [${grupoColumn.name}])),
+          CONVERT(NVARCHAR(255), [${grupoColumn.name}]);
+      `);
+
+      return res.json({
+        items: (result.recordset || []).map((row: any) => ({
+          grupo: toText(row?.grupo),
+          total: toNumber(row?.total, 0),
+        })),
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo consultar grupos." });
     }
   });
 
@@ -1411,24 +2895,24 @@ async function startServer() {
 
               if (updateEntries.length > 0) {
                 await request.query(`
-                  IF EXISTS (SELECT 1 FROM dbo.Productos WHERE [${importKeyColumn.name}] = @importKey)
+                  IF EXISTS (SELECT 1 FROM ${ECOMMERCE_PRODUCTS_SQL} WHERE [${importKeyColumn.name}] = @importKey)
                   BEGIN
-                    UPDATE dbo.Productos
+                    UPDATE ${ECOMMERCE_PRODUCTS_SQL}
                     SET
                       ${updateSetClause}
                     WHERE [${importKeyColumn.name}] = @importKey;
                   END
                   ELSE
                   BEGIN
-                    INSERT INTO dbo.Productos (${insertColumnsClause})
+                    INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
                     VALUES (${insertValuesClause});
                   END
                 `);
               } else {
                 await request.query(`
-                  IF NOT EXISTS (SELECT 1 FROM dbo.Productos WHERE [${importKeyColumn.name}] = @importKey)
+                  IF NOT EXISTS (SELECT 1 FROM ${ECOMMERCE_PRODUCTS_SQL} WHERE [${importKeyColumn.name}] = @importKey)
                   BEGIN
-                    INSERT INTO dbo.Productos (${insertColumnsClause})
+                    INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
                     VALUES (${insertValuesClause});
                   END
                 `);
@@ -1443,7 +2927,7 @@ async function startServer() {
           const insertValuesClause = insertEntries.map((_, index) => `@p${index}`).join(", ");
 
           await request.query(`
-            INSERT INTO dbo.Productos (${insertColumnsClause})
+            INSERT INTO ${ECOMMERCE_PRODUCTS_SQL} (${insertColumnsClause})
             VALUES (${insertValuesClause});
           `);
           importedCount += 1;
@@ -1512,7 +2996,7 @@ async function startServer() {
       }
 
       const activeFilter = activoColumn ? `WHERE [${activoColumn.name}] = 1` : "";
-      const result = await sqlPool.request().query(`SELECT * FROM dbo.Productos ${activeFilter}`);
+      const result = await sqlPool.request().query(`SELECT * FROM ${ECOMMERCE_PRODUCTS_SQL} ${activeFilter}`);
 
       const products = (result.recordset as Array<Record<string, any>>)
         .map((row, index) => {
@@ -1881,40 +3365,280 @@ async function startServer() {
 
   // --- Urbano & Payment Integration ---
 
-  // Mock Urbano Credentials (In a real app, these would be in .env)
   const URBANO_CONFIG = {
     user: process.env.URBANO_USER || "1010-WebService",
     pass: process.env.URBANO_PASS || "1qasw27ygfsdernh",
-    id_contrato: process.env.URBANO_CONTRATO || "1010"
+    id_contrato: process.env.URBANO_CONTRATO || "4661",
+    id_orden: process.env.URBANO_ID_ORDEN || "4661",
+    linea: process.env.URBANO_LINEA || "3",
+    origen_ubigeo: process.env.URBANO_ORIGEN_UBIGEO || "",
+    api_key: process.env.URBANO_API_KEY || "GYWym2dyaGQssZ5bxSAhExF1sMUb8aLluVrG2gufPF50tS64hBgkz0ofVtdcdLc8",
+    base_preprod: process.env.URBANO_BASE_PREPROD || "https://devpyp.urbano.com.ec",
+    base_prod: process.env.URBANO_BASE_PROD || "https://app.urbano.com.ec",
+    print_use_prod: process.env.URBANO_PRINT_USE_PROD === "true",
+  };
+
+  type UrbanoService = "generateGuide" | "tracking" | "printGuide" | "quote" | "cancelGuide";
+
+  const urbanoPathMap: Record<UrbanoService, string> = {
+    generateGuide: "/ws/ue/ge/",
+    tracking: "/ws/ue/tracking/",
+    printGuide: "/ws/ue/imprimirge/",
+    quote: "/ws/ue/cotizarenvio/",
+    cancelGuide: "/ws/ue/cancela_ge/",
+  };
+
+  const getUrbanoBaseUrl = (service: UrbanoService) => {
+    if (service === "printGuide" && URBANO_CONFIG.print_use_prod) {
+      return URBANO_CONFIG.base_prod;
+    }
+    return URBANO_CONFIG.base_preprod;
+  };
+
+  const getUrbanoUrl = (service: UrbanoService) => `${getUrbanoBaseUrl(service)}${urbanoPathMap[service]}`;
+
+  const toObjectPayload = (value: unknown) => {
+    if (value && typeof value === "object") return value as Record<string, any>;
+    return {};
+  };
+
+  const parseJsonSafe = (value: string) => {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  };
+
+  const extractUrbanoGuide = (payload: any): string | null => {
+    if (!payload) return null;
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const found = extractUrbanoGuide(item);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    if (typeof payload !== "object") return null;
+
+    const candidates = [
+      payload["guía"],
+      payload["guia"],
+      payload["tracking"],
+      payload["tracking_code"],
+      payload["cod_rastreo"],
+      payload["codigo_rastreo"],
+      payload["nro_guia"],
+      payload["numero_guia"],
+    ];
+
+    const firstValid = candidates.find((item) => item !== null && item !== undefined && String(item).trim() !== "");
+    return firstValid ? String(firstValid).trim() : null;
+  };
+
+  const isUrbanoPayloadError = (payload: any): boolean => {
+    const current = Array.isArray(payload) ? payload[0] : payload;
+    if (!current || typeof current !== "object") return false;
+
+    const numericError = Number(current.error ?? current.error_sql);
+    if (Number.isFinite(numericError) && numericError < 0) return true;
+
+    const message = String(current.mensaje ?? current.error_info ?? "").toLowerCase();
+    if (message.includes("json") && (message.includes("vacia") || message.includes("vac\u00eda"))) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const callUrbano = async (service: UrbanoService, payload: Record<string, any>) => {
+    const url = getUrbanoUrl(service);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": URBANO_CONFIG.api_key,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const raw = await response.text();
+    const json = parseJsonSafe(raw);
+    let data = json ?? raw;
+    const rawLower = String(raw || "").toLowerCase();
+    const hasEmptyJsonErrorText = rawLower.includes("json") && (rawLower.includes("vacia") || rawLower.includes("vacía"));
+    let ok = response.ok && !isUrbanoPayloadError(data) && !hasEmptyJsonErrorText;
+    let status = response.status;
+
+    const requiresFormFallback =
+      typeof payload.json === "string" && payload.json.trim() !== "" && (isUrbanoPayloadError(data) || hasEmptyJsonErrorText);
+
+    if (requiresFormFallback) {
+      const form = new URLSearchParams();
+      form.set("json", String(payload.json));
+
+      const fallbackResponse = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "x-api-key": URBANO_CONFIG.api_key,
+        },
+        body: form.toString(),
+      });
+
+      const fallbackRaw = await fallbackResponse.text();
+      const fallbackJson = parseJsonSafe(fallbackRaw);
+      data = fallbackJson ?? fallbackRaw;
+      ok = fallbackResponse.ok && !isUrbanoPayloadError(data);
+      status = fallbackResponse.status;
+    }
+
+    return {
+      ok,
+      status,
+      url,
+      raw,
+      data,
+    };
   };
 
   // Cotizar Envío (Urbano)
   app.post("/api/shipping/quote", async (req, res) => {
-    const { destination_ubigeo, weight, pieces } = req.body;
-    
-    // According to manual section 1.5
-    // In a real scenario, we would call: https://app.urbano.com.ec/ws/ue/cotizarenvio
-    // For this demo, we simulate a response based on the manual's structure
-    
-    const mockQuote = [
-      {
-        "error_sql": "0",
-        "error_info": "",
-        "id_servicio": "1",
-        "servicio": "Distribucion",
-        "valor_ennvio": "3.50",
-        "time_envio": "1 00:00"
-      },
-      {
-        "error_sql": "0",
-        "error_info": "",
-        "id_servicio": "3",
-        "servicio": "Seguro",
-        "valor_ennvio": "0.50"
-      }
-    ];
+    try {
+      const input = toObjectPayload(req.body);
+      const hasRawJson = typeof input.json === "string" && input.json.trim() !== "";
+      const payload = hasRawJson
+        ? input
+        : {
+            json: JSON.stringify({
+              user: URBANO_CONFIG.user,
+              pass: URBANO_CONFIG.pass,
+              linea: URBANO_CONFIG.linea,
+              id_contrato: URBANO_CONFIG.id_contrato,
+              id_orden: URBANO_CONFIG.id_orden,
+              ubi_origen: URBANO_CONFIG.origen_ubigeo,
+              ubi_direc: input.destination_ubigeo || input.ubigeo || "",
+              peso_total: input.weight || 0,
+              pieza_total: input.pieces || 1,
+            }),
+          };
 
-    res.json(mockQuote);
+      const urbanoResponse = await callUrbano("quote", payload);
+
+      if (!urbanoResponse.ok) {
+        const errorStatus = urbanoResponse.status >= 400 ? urbanoResponse.status : 502;
+        return res.status(errorStatus).json({
+          error: "Error al cotizar envío con Urbano.",
+          urbano_status: urbanoResponse.status,
+          urbano_response: urbanoResponse.data,
+        });
+      }
+
+      return res.json(urbanoResponse.data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo cotizar con Urbano." });
+    }
+  });
+
+  app.post("/api/shipping/tracking", async (req, res) => {
+    try {
+      const input = toObjectPayload(req.body);
+      const payload =
+        typeof input.json === "string" && input.json.trim() !== ""
+          ? input
+          : {
+              json: JSON.stringify({
+                user: URBANO_CONFIG.user,
+                pass: URBANO_CONFIG.pass,
+                linea: URBANO_CONFIG.linea,
+                id_contrato: URBANO_CONFIG.id_contrato,
+                id_orden: URBANO_CONFIG.id_orden,
+                ...input,
+              }),
+            };
+
+      const urbanoResponse = await callUrbano("tracking", payload);
+      if (!urbanoResponse.ok) {
+        const errorStatus = urbanoResponse.status >= 400 ? urbanoResponse.status : 502;
+        return res.status(errorStatus).json({
+          error: "Error al consultar tracking con Urbano.",
+          urbano_status: urbanoResponse.status,
+          urbano_response: urbanoResponse.data,
+        });
+      }
+
+      return res.json(urbanoResponse.data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo consultar tracking en Urbano." });
+    }
+  });
+
+  app.post("/api/shipping/print-guide", async (req, res) => {
+    try {
+      const input = toObjectPayload(req.body);
+      const payload =
+        typeof input.json === "string" && input.json.trim() !== ""
+          ? input
+          : {
+              json: JSON.stringify({
+                user: URBANO_CONFIG.user,
+                pass: URBANO_CONFIG.pass,
+                linea: URBANO_CONFIG.linea,
+                id_contrato: URBANO_CONFIG.id_contrato,
+                id_orden: URBANO_CONFIG.id_orden,
+                ...input,
+              }),
+            };
+
+      const urbanoResponse = await callUrbano("printGuide", payload);
+      if (!urbanoResponse.ok) {
+        const errorStatus = urbanoResponse.status >= 400 ? urbanoResponse.status : 502;
+        return res.status(errorStatus).json({
+          error: "Error al imprimir guía con Urbano.",
+          urbano_status: urbanoResponse.status,
+          urbano_response: urbanoResponse.data,
+        });
+      }
+
+      return res.json(urbanoResponse.data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo imprimir guía en Urbano." });
+    }
+  });
+
+  app.post("/api/shipping/cancel-guide", async (req, res) => {
+    try {
+      const input = toObjectPayload(req.body);
+      const payload =
+        typeof input.json === "string" && input.json.trim() !== ""
+          ? input
+          : {
+              json: JSON.stringify({
+                user: URBANO_CONFIG.user,
+                pass: URBANO_CONFIG.pass,
+                linea: URBANO_CONFIG.linea,
+                id_contrato: URBANO_CONFIG.id_contrato,
+                id_orden: URBANO_CONFIG.id_orden,
+                ...input,
+              }),
+            };
+
+      const urbanoResponse = await callUrbano("cancelGuide", payload);
+      if (!urbanoResponse.ok) {
+        const errorStatus = urbanoResponse.status >= 400 ? urbanoResponse.status : 502;
+        return res.status(errorStatus).json({
+          error: "Error al cancelar guía con Urbano.",
+          urbano_status: urbanoResponse.status,
+          urbano_response: urbanoResponse.data,
+        });
+      }
+
+      return res.json(urbanoResponse.data);
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo cancelar guía en Urbano." });
+    }
   });
 
   // Confirm Payment & Generate Urbano Guide
@@ -1992,12 +3716,14 @@ async function startServer() {
       // 2. Update Order Status to 'pagado'
       db.prepare("UPDATE orders SET status = 'pagado' WHERE id = ?").run(resolvedOrderId);
 
-      // 3. Generate Urbano Guide (Section 1.1 of manual)
-      // We simulate the call to https://app.urbano.com.ec/ws/ue/ge
+      // 3. Generar guía de Urbano (preproducción)
       const urbanoPayload = {
         "json": JSON.stringify({
-          "linea": "3",
+          "user": URBANO_CONFIG.user,
+          "pass": URBANO_CONFIG.pass,
+          "linea": URBANO_CONFIG.linea,
           "id_contrato": URBANO_CONFIG.id_contrato,
+          "id_orden": URBANO_CONFIG.id_orden,
           "cod_rastreo": `SINO-${resolvedOrderNumber}`,
           "nom_cliente": shipping_data.name,
           "dir_entrega": shipping_data.address,
@@ -2014,20 +3740,51 @@ async function startServer() {
       };
 
       const urbanoRequestPayload = JSON.stringify(urbanoPayload);
+      const urbanoHttpResponse = await callUrbano("generateGuide", urbanoPayload);
+      const urbanoResponsePayload = urbanoHttpResponse.data;
+
+      if (!urbanoHttpResponse.ok) {
+        db.prepare(
+          `INSERT INTO ws_logs
+           (order_id, order_number, service, endpoint, request_payload, response_payload, status_code, success, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          resolvedOrderId,
+          resolvedOrderNumber,
+          "urbano",
+          urbanoPathMap.generateGuide,
+          urbanoRequestPayload,
+          JSON.stringify(urbanoResponsePayload),
+          Number(urbanoHttpResponse.status || 0),
+          0,
+          new Date().toISOString()
+        );
+
+        return res.status(502).json({
+          error: "Urbano no generó la guía.",
+          urbano_status: urbanoHttpResponse.status,
+          urbano_response: urbanoResponsePayload,
+        });
+      }
+
+      const shippingGuide = extractUrbanoGuide(urbanoResponsePayload) || `SINO-${resolvedOrderNumber}`;
+
       const wsLogInsert = db
         .prepare(
           `INSERT INTO ws_logs
            (order_id, order_number, service, endpoint, request_payload, status_code, success, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(resolvedOrderId, resolvedOrderNumber, "urbano", "/ws/ue/ge", urbanoRequestPayload, 0, 0, new Date().toISOString());
-
-      // Mocking Urbano Response
-      const mockUrbanoResponse = {
-        "error": 1,
-        "mensaje": "OK",
-        "guía": `URB${Math.floor(10000000 + Math.random() * 90000000)}`
-      };
+        .run(
+          resolvedOrderId,
+          resolvedOrderNumber,
+          "urbano",
+          urbanoPathMap.generateGuide,
+          urbanoRequestPayload,
+          Number(urbanoHttpResponse.status || 0),
+          1,
+          new Date().toISOString()
+        );
 
       const shipmentInsert = db
         .prepare(
@@ -2056,14 +3813,14 @@ async function startServer() {
           "urbano",
           "1",
           "Distribucion",
-          mockUrbanoResponse.guía,
+          shippingGuide,
           "guia_generada",
           shipping_data?.ubigeo || "",
           shipping_data?.address || "",
           shipping_data?.name || "",
           shipping_data?.phone || "",
           0,
-          JSON.stringify(mockUrbanoResponse),
+          JSON.stringify(urbanoResponsePayload),
           new Date().toISOString(),
           new Date().toISOString()
         );
@@ -2077,16 +3834,16 @@ async function startServer() {
         ).run(
           shipment.id,
           "guia_generada",
-          `Guia ${mockUrbanoResponse.guía} generada correctamente`,
+          `Guia ${shippingGuide} generada correctamente`,
           "backend",
-          JSON.stringify(mockUrbanoResponse),
+          JSON.stringify(urbanoResponsePayload),
           new Date().toISOString()
         );
       }
 
       db.prepare("UPDATE ws_logs SET response_payload = ?, status_code = ?, success = ?, created_at = created_at WHERE id = ?").run(
-        JSON.stringify(mockUrbanoResponse),
-        200,
+        JSON.stringify(urbanoResponsePayload),
+        Number(urbanoHttpResponse.status || 200),
         1,
         Number(wsLogInsert.lastInsertRowid)
       );
@@ -2145,14 +3902,14 @@ async function startServer() {
           sqlShipmentRequest.input("provider", sql.NVarChar(60), "urbano");
           sqlShipmentRequest.input("service_id", sql.NVarChar(30), "1");
           sqlShipmentRequest.input("service_name", sql.NVarChar(120), "Distribucion");
-          sqlShipmentRequest.input("tracking_code", sql.NVarChar(120), mockUrbanoResponse.guía);
+          sqlShipmentRequest.input("tracking_code", sql.NVarChar(120), shippingGuide);
           sqlShipmentRequest.input("shipment_status", sql.NVarChar(30), "guia_generada");
           sqlShipmentRequest.input("destination_ubigeo", sql.NVarChar(20), shipping_data?.ubigeo || "");
           sqlShipmentRequest.input("destination_address", sql.NVarChar(250), shipping_data?.address || "");
           sqlShipmentRequest.input("receiver_name", sql.NVarChar(120), shipping_data?.name || "");
           sqlShipmentRequest.input("receiver_phone", sql.NVarChar(30), shipping_data?.phone || "");
           sqlShipmentRequest.input("quote_total", sql.Decimal(18, 2), 0);
-          sqlShipmentRequest.input("provider_payload", sql.NVarChar(sql.MAX), JSON.stringify(mockUrbanoResponse));
+          sqlShipmentRequest.input("provider_payload", sql.NVarChar(sql.MAX), JSON.stringify(urbanoResponsePayload));
           sqlShipmentRequest.input("created_at", sql.DateTime2, new Date(sqlNow));
           sqlShipmentRequest.input("updated_at", sql.DateTime2, new Date(sqlNow));
 
@@ -2197,9 +3954,9 @@ async function startServer() {
               .request()
               .input("shipment_id", sql.Int, Number(sqlShipmentId))
               .input("status", sql.NVarChar(30), "guia_generada")
-              .input("description", sql.NVarChar(250), `Guia ${mockUrbanoResponse.guía} generada correctamente`)
+              .input("description", sql.NVarChar(250), `Guia ${shippingGuide} generada correctamente`)
               .input("source", sql.NVarChar(30), "backend")
-              .input("payload", sql.NVarChar(sql.MAX), JSON.stringify(mockUrbanoResponse))
+              .input("payload", sql.NVarChar(sql.MAX), JSON.stringify(urbanoResponsePayload))
               .input("event_time", sql.DateTime2, new Date(sqlNow))
               .query(`
                 INSERT INTO dbo.shipment_events (shipment_id, status, description, source, payload, event_time)
@@ -2212,10 +3969,10 @@ async function startServer() {
             .input("order_id", sql.Int, Number(resolvedOrderId))
             .input("order_number", sql.NVarChar(80), resolvedOrderNumber)
             .input("service", sql.NVarChar(60), "urbano")
-            .input("endpoint", sql.NVarChar(150), "/ws/ue/ge")
+            .input("endpoint", sql.NVarChar(150), urbanoPathMap.generateGuide)
             .input("request_payload", sql.NVarChar(sql.MAX), urbanoRequestPayload)
-            .input("response_payload", sql.NVarChar(sql.MAX), JSON.stringify(mockUrbanoResponse))
-            .input("status_code", sql.Int, 200)
+            .input("response_payload", sql.NVarChar(sql.MAX), JSON.stringify(urbanoResponsePayload))
+            .input("status_code", sql.Int, Number(urbanoHttpResponse.status || 200))
             .input("success", sql.Bit, true)
             .input("created_at", sql.DateTime2, new Date(sqlNow))
             .query(`
@@ -2233,7 +3990,7 @@ async function startServer() {
         payment_transaction_id: paymentTransactionId,
         idempotency_key: normalizedIdempotencyKey,
         order_number: resolvedOrderNumber,
-        shipping_guide: mockUrbanoResponse.guía,
+        shipping_guide: shippingGuide,
         shipment_status: "guia_generada",
         message: "Pago procesado y guía de Urbano generada correctamente"
       });

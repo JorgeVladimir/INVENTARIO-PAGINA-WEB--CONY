@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ShoppingCart, 
@@ -14,8 +14,7 @@ import {
   ChevronLeft,
   ShieldCheck,
   X,
-  UserPlus,
-  LockKeyhole
+  UserPlus
 } from 'lucide-react';
 import { useCart } from '../CartContext';
 import { Link, useNavigate } from 'react-router-dom';
@@ -30,7 +29,11 @@ const CartPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentError, setPaymentError] = useState('');
+  const [paymentStatusMessage, setPaymentStatusMessage] = useState('');
   const navigate = useNavigate();
+
+  const SHIPPING_COST = 5;
+  const PTP_PENDING_KEY = 'cony_ptp_pending_checkout';
 
   const [shippingData, setShippingData] = useState({
     name: '',
@@ -46,25 +49,11 @@ const CartPage: React.FC = () => {
     password: ''
   });
 
-  const [cardData, setCardData] = useState({
-    cardNumber: '',
-    cardName: '',
-    expiry: '',
-    cvv: ''
-  });
-
   const mapUbigeoByCity: Record<string, string> = {
     Quito: '170150',
     Guayaquil: '090150',
     Cuenca: '010150',
     Manta: '130150'
-  };
-
-  const formatCardNumber = (value: string) => value.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ').trim();
-  const formatExpiry = (value: string) => {
-    const clean = value.replace(/\D/g, '').slice(0, 4);
-    if (clean.length <= 2) return clean;
-    return `${clean.slice(0, 2)}/${clean.slice(2)}`;
   };
 
   const handleConfirmPayment = async () => {
@@ -76,14 +65,11 @@ const CartPage: React.FC = () => {
       setPaymentError('Completa el registro de usuario para continuar.');
       return;
     }
-    if (cardData.cardNumber.replace(/\s/g, '').length !== 16 || !cardData.cardName || cardData.expiry.length !== 5 || cardData.cvv.length < 3) {
-      setPaymentError('Completa correctamente los datos de la tarjeta.');
-      return;
-    }
 
     setLoading(true);
     setPaymentError('');
     setErrorMessage('');
+    setPaymentStatusMessage('');
 
     try {
       const registerResponse = await fetch('/api/public/register', {
@@ -106,7 +92,7 @@ const CartPage: React.FC = () => {
         body: JSON.stringify({
           user_id: registeredUser.id,
           items: items.map(i => ({ id: i.id, quantity: i.quantity, price: i.price })),
-          total: total + 5.00
+          total: total + SHIPPING_COST
         })
       });
 
@@ -118,40 +104,58 @@ const CartPage: React.FC = () => {
 
       const orderData = await orderResponse.json();
 
-      const checkoutResponse = await fetch('/api/checkout', {
+      const placetoPayResponse = await fetch('/api/payments/placetopay/session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           order_id: orderData.id,
-          shipping_data: {
-            ...shippingData,
-            ubigeo: mapUbigeoByCity[shippingData.city] || '170150',
-            weight: 2.5,
-            pieces: items.length,
-            items
+          order_number: orderData.orderNumber,
+          amount: total + SHIPPING_COST,
+          buyer: {
+            name: userData.full_name,
+            surname: 'Cliente',
+            email: userData.email,
+            mobile: shippingData.phone,
+            address: shippingData.address,
+            city: shippingData.city,
           },
-          payment_method: 'card'
+          return_url: `${window.location.origin}/carrito?ptp_return=1&order_id=${orderData.id}&order_number=${encodeURIComponent(orderData.orderNumber)}`,
         })
       });
 
-      if (!checkoutResponse.ok) {
-        const data = await checkoutResponse.json().catch(() => ({}));
-        setPaymentError(data.error || 'No se pudo procesar el pago.');
+      if (!placetoPayResponse.ok) {
+        const data = await placetoPayResponse.json().catch(() => ({}));
+        setPaymentError(data.error || 'No se pudo iniciar el pago con PlaceToPay.');
         return;
       }
 
-      const checkoutData = await checkoutResponse.json();
-      setOrderResult({
-        ...orderData,
-        guide: checkoutData.shipping_guide,
+      const placetoPayData = await placetoPayResponse.json();
+
+      if (!placetoPayData.processUrl || !placetoPayData.requestId) {
+        setPaymentError('PlaceToPay no devolvió una URL de pago válida.');
+        return;
+      }
+
+      const pendingPayload = {
+        requestId: String(placetoPayData.requestId),
+        orderId: Number(orderData.id),
+        orderNumber: String(orderData.orderNumber),
         orderedItems: [...items],
         subtotal: total,
-        shippingCost: 5.00,
-        finalTotal: total + 5.00,
-      });
-      setIsPaymentModalOpen(false);
-      setStep('success');
-      clearCart();
+        shippingCost: SHIPPING_COST,
+        finalTotal: total + SHIPPING_COST,
+        shippingData: {
+          ...shippingData,
+          ubigeo: mapUbigeoByCity[shippingData.city] || '170150',
+          weight: 2.5,
+          pieces: items.length,
+          items
+        },
+      };
+
+      localStorage.setItem(PTP_PENDING_KEY, JSON.stringify(pendingPayload));
+      setPaymentStatusMessage('Redirigiendo a PlaceToPay...');
+      window.location.href = String(placetoPayData.processUrl);
     } catch (e) {
       console.error(e);
       setPaymentError('Error de conexión con el servidor. Verifica que el backend esté activo.');
@@ -159,6 +163,99 @@ const CartPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const completePlaceToPayFlow = async () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('ptp_return') !== '1') return;
+
+      const pendingRaw = localStorage.getItem(PTP_PENDING_KEY);
+      if (!pendingRaw) {
+        setErrorMessage('No se encontró una transacción pendiente para validar con PlaceToPay.');
+        return;
+      }
+
+      let pending: any = null;
+      try {
+        pending = JSON.parse(pendingRaw);
+      } catch {
+        localStorage.removeItem(PTP_PENDING_KEY);
+        setErrorMessage('La información de pago pendiente no es válida.');
+        return;
+      }
+
+      if (!pending?.requestId || !pending?.orderId) {
+        localStorage.removeItem(PTP_PENDING_KEY);
+        setErrorMessage('La sesión pendiente de PlaceToPay está incompleta.');
+        return;
+      }
+
+      setLoading(true);
+      setStep('checkout');
+      setPaymentStatusMessage('Validando pago con PlaceToPay...');
+      setPaymentError('');
+
+      try {
+        const statusResponse = await fetch('/api/payments/placetopay/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requestId: pending.requestId }),
+        });
+
+        if (!statusResponse.ok) {
+          const data = await statusResponse.json().catch(() => ({}));
+          throw new Error(data.error || 'No se pudo validar el estado de PlaceToPay.');
+        }
+
+        const statusData = await statusResponse.json();
+        if (!statusData.approved) {
+          const statusLabel = statusData?.status?.status || 'REJECTED';
+          setPaymentError(`El pago en PlaceToPay no fue aprobado (${statusLabel}).`);
+          setPaymentStatusMessage('');
+          return;
+        }
+
+        const checkoutResponse = await fetch('/api/checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order_id: pending.orderId,
+            order_number: pending.orderNumber,
+            shipping_data: pending.shippingData,
+            payment_method: 'placetopay',
+            idempotency_key: `ptp-${pending.requestId}`,
+          })
+        });
+
+        if (!checkoutResponse.ok) {
+          const data = await checkoutResponse.json().catch(() => ({}));
+          throw new Error(data.error || 'Pago aprobado, pero no se pudo cerrar la orden local.');
+        }
+
+        const checkoutData = await checkoutResponse.json();
+        setOrderResult({
+          orderNumber: pending.orderNumber,
+          guide: checkoutData.shipping_guide,
+          orderedItems: pending.orderedItems || [],
+          subtotal: Number(pending.subtotal || 0),
+          shippingCost: Number(pending.shippingCost || SHIPPING_COST),
+          finalTotal: Number(pending.finalTotal || 0),
+        });
+
+        clearCart();
+        localStorage.removeItem(PTP_PENDING_KEY);
+        setPaymentStatusMessage('Pago aprobado en PlaceToPay.');
+        setStep('success');
+        setIsPaymentModalOpen(false);
+      } catch (error: any) {
+        setPaymentError(error?.message || 'No se pudo finalizar la validación con PlaceToPay.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    completePlaceToPayFlow();
+  }, [clearCart]);
 
   const generatePDF = () => {
     const doc = new jsPDF() as any;
@@ -335,11 +432,11 @@ const CartPage: React.FC = () => {
               </div>
               <div className="flex justify-between text-[10px] md:text-sm font-bold text-white/60 uppercase tracking-widest">
                 <span>Envío</span>
-                <span className="text-emerald-400">$5.00</span>
+                <span className="text-emerald-400">${SHIPPING_COST.toFixed(2)}</span>
               </div>
               <div className="pt-6 border-t border-white/10 flex justify-between items-end">
                 <span className="text-[9px] md:text-xs font-black uppercase tracking-[0.2em] text-china-gold">Total a Pagar</span>
-                <span className="text-3xl md:text-4xl font-black">${(total + 5).toFixed(2)}</span>
+                <span className="text-3xl md:text-4xl font-black">${(total + SHIPPING_COST).toFixed(2)}</span>
               </div>
             </div>
 
@@ -371,7 +468,7 @@ const CartPage: React.FC = () => {
                     className="w-full bg-emerald-500 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-sm shadow-xl hover:bg-white hover:text-emerald-500 transition-all flex items-center justify-center gap-3 disabled:bg-slate-700 disabled:text-white/30"
                   >
                     <CreditCard size={20} />
-                    Ventana de Pago
+                    Pagar con PlaceToPay
                   </button>
                   <button 
                     onClick={() => setStep('cart')}
@@ -401,8 +498,8 @@ const CartPage: React.FC = () => {
             <motion.div initial={{ opacity: 0, y: 30, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20 }} className="relative w-full max-w-3xl bg-white rounded-[36px] shadow-2xl p-8 md:p-10 space-y-8">
               <div className="flex items-start justify-between border-b border-slate-100 pb-5">
                 <div className="space-y-2">
-                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-china-red">Pago Seguro</p>
-                  <h3 className="text-2xl font-black uppercase tracking-tight">Registro de Usuario y Tarjeta</h3>
+                  <p className="text-[10px] font-black uppercase tracking-[0.24em] text-china-red">Checkout PlaceToPay</p>
+                  <h3 className="text-2xl font-black uppercase tracking-tight">Registro de Usuario y Confirmación</h3>
                 </div>
                 <button onClick={() => setIsPaymentModalOpen(false)} className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-500" title="Cerrar ventana de pago" aria-label="Cerrar ventana de pago">
                   <X size={20} />
@@ -421,23 +518,28 @@ const CartPage: React.FC = () => {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-slate-900">
-                    <LockKeyhole size={18} className="text-china-red" />
-                    <p className="text-sm font-black uppercase tracking-widest">Datos de Tarjeta</p>
-                  </div>
-                  <input className="china-input text-sm" placeholder="Número de tarjeta" value={cardData.cardNumber} onChange={(e) => setCardData({ ...cardData, cardNumber: formatCardNumber(e.target.value) })} />
-                  <input className="china-input text-sm" placeholder="Nombre en tarjeta" value={cardData.cardName} onChange={(e) => setCardData({ ...cardData, cardName: e.target.value })} />
-                  <div className="grid grid-cols-2 gap-4">
-                    <input className="china-input text-sm" placeholder="MM/AA" value={cardData.expiry} onChange={(e) => setCardData({ ...cardData, expiry: formatExpiry(e.target.value) })} />
-                    <input className="china-input text-sm" placeholder="CVV" value={cardData.cvv} onChange={(e) => setCardData({ ...cardData, cvv: e.target.value.replace(/\D/g, '').slice(0, 4) })} />
+                  <div className="rounded-2xl border border-slate-200 p-5 space-y-3 bg-slate-50">
+                    <p className="text-sm font-black uppercase tracking-widest text-slate-900">¿Cómo funciona?</p>
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                      Al confirmar, te redirigiremos a la pasarela segura de PlaceToPay para completar el pago.
+                    </p>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                      No almacenamos datos de tarjeta en este formulario.
+                    </p>
                   </div>
                 </div>
               </div>
 
               <div className="bg-slate-50 rounded-2xl p-5 flex items-center justify-between">
                 <span className="text-xs font-black uppercase tracking-widest text-slate-500">Total a pagar</span>
-                <span className="text-3xl font-black text-china-red">${(total + 5).toFixed(2)}</span>
+                <span className="text-3xl font-black text-china-red">${(total + SHIPPING_COST).toFixed(2)}</span>
               </div>
+
+              {paymentStatusMessage && (
+                <p className="text-emerald-600 text-[11px] font-black uppercase tracking-widest border-t border-emerald-200 pt-4">
+                  {paymentStatusMessage}
+                </p>
+              )}
 
               {(paymentError || errorMessage) && (
                 <p className="text-china-red text-[11px] font-black uppercase tracking-widest border-t border-china-red/20 pt-4">
@@ -447,7 +549,7 @@ const CartPage: React.FC = () => {
 
               <button onClick={handleConfirmPayment} disabled={loading} className="w-full china-btn-primary !py-5 flex items-center justify-center gap-3 disabled:opacity-70">
                 {loading ? <Loader2 className="animate-spin" /> : <CreditCard size={18} />}
-                Confirmar Pago
+                Ir a PlaceToPay
               </button>
             </motion.div>
           </div>

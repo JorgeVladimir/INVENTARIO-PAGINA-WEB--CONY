@@ -1,0 +1,275 @@
+{
+  "info": {
+    "_postman_id": "e8f6f87a-8b2e-4d7e-a8fa-9e8b1a13c501",
+    "name": "CONY - SAP Sync Monitor",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Coleccion para iniciar y monitorear la sincronizacion SAP -> SQL Server (ECPRDU). Incluye flujo automatizado en Runner."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:7002"
+    },
+    {
+      "key": "pollDelayMs",
+      "value": "5000"
+    },
+    {
+      "key": "maxPolls",
+      "value": "360"
+    },
+    {
+      "key": "pollCount",
+      "value": "0"
+    },
+    {
+      "key": "lastStatus",
+      "value": ""
+    },
+    {
+      "key": "lastPhase",
+      "value": ""
+    },
+    {
+      "key": "lastProgress",
+      "value": "0"
+    },
+    {
+      "key": "lastTargetCount",
+      "value": "0"
+    },
+    {
+      "key": "lastRunId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1) Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "health"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Health responde 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "var body = pm.response.json();",
+              "pm.test('Backend OK', function () {",
+              "  pm.expect(body.ok).to.eql(true);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2) Iniciar Sync SAP",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/ecommerce/sap/sync",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ecommerce",
+            "sap",
+            "sync"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "var code = pm.response.code;",
+              "pm.test('Sync devuelve 200 o 409', function () {",
+              "  pm.expect([200, 409]).to.include(code);",
+              "});",
+              "",
+              "var json = {};",
+              "try { json = pm.response.json(); } catch (e) { json = {}; }",
+              "",
+              "if (code === 200) {",
+              "  pm.collectionVariables.set('pollCount', '0');",
+              "  pm.collectionVariables.set('lastStatus', 'running');",
+              "  pm.collectionVariables.set('lastPhase', 'starting');",
+              "}",
+              "",
+              "if (code === 409) {",
+              "  pm.collectionVariables.set('pollCount', '0');",
+              "}",
+              "",
+              "console.log('[SYNC] status=', code, 'response=', json);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3) Monitor Sync (Runner Loop)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/ecommerce/sap/sync-monitor",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ecommerce",
+            "sap",
+            "sync-monitor"
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Monitor responde 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "var body = pm.response.json();",
+              "var status = String(body.status || '').toLowerCase();",
+              "var phase = String(body.phase || '');",
+              "var progress = Number(body.progressPct || 0);",
+              "var targetCount = Number(body.targetCount || 0);",
+              "var runId = String(body.runId || '');",
+              "",
+              "pm.collectionVariables.set('lastStatus', status);",
+              "pm.collectionVariables.set('lastPhase', phase);",
+              "pm.collectionVariables.set('lastProgress', String(progress));",
+              "pm.collectionVariables.set('lastTargetCount', String(targetCount));",
+              "pm.collectionVariables.set('lastRunId', runId);",
+              "",
+              "console.log('[MONITOR] status=' + status + ' phase=' + phase + ' progress=' + progress + '% targetCount=' + targetCount + ' runId=' + runId);",
+              "",
+              "pm.test('Status valido', function () {",
+              "  pm.expect(['idle', 'running', 'success', 'error']).to.include(status);",
+              "});",
+              "",
+              "if (status === 'error') {",
+              "  pm.test('Sync sin error', function () {",
+              "    pm.expect.fail('Sync marco estado error: ' + (body.lastError || 'sin detalle'));",
+              "  });",
+              "}",
+              "",
+              "var count = Number(pm.collectionVariables.get('pollCount') || '0');",
+              "var maxPolls = Number(pm.collectionVariables.get('maxPolls') || '360');",
+              "var delayMs = Number(pm.collectionVariables.get('pollDelayMs') || '5000');",
+              "count += 1;",
+              "pm.collectionVariables.set('pollCount', String(count));",
+              "",
+              "if (status === 'running') {",
+              "  if (count >= maxPolls) {",
+              "    pm.test('No excede maxPolls', function () {",
+              "      pm.expect.fail('Timeout de monitoreo superado. maxPolls=' + maxPolls);",
+              "    });",
+              "  } else {",
+              "    postman.setNextRequest('3) Monitor Sync (Runner Loop)');",
+              "    var start = Date.now();",
+              "    while (Date.now() - start < delayMs) {}",
+              "  }",
+              "} else if (status === 'success') {",
+              "  postman.setNextRequest('4) Conteo Productos');",
+              "} else {",
+              "  postman.setNextRequest('4) Conteo Productos');",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4) Conteo Productos",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/ecommerce/productos?limit=1&offset=0",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "ecommerce",
+            "productos"
+          ],
+          "query": [
+            {
+              "key": "limit",
+              "value": "1"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Conteo responde 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "",
+              "var body = pm.response.json();",
+              "var total = Number(body.total || 0);",
+              "var status = pm.collectionVariables.get('lastStatus');",
+              "var phase = pm.collectionVariables.get('lastPhase');",
+              "var progress = pm.collectionVariables.get('lastProgress');",
+              "var runId = pm.collectionVariables.get('lastRunId');",
+              "",
+              "console.log('[RESUMEN] runId=' + runId + ' status=' + status + ' phase=' + phase + ' progress=' + progress + '% totalProductos=' + total);",
+              "",
+              "if (String(status) === 'success') {",
+              "  pm.test('Total de productos mayor a 0 al finalizar', function () {",
+              "    pm.expect(total).to.be.above(0);",
+              "  });",
+              "}"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
