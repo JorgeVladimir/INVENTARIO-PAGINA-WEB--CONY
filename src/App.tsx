@@ -11,6 +11,7 @@ import { CartProvider } from './CartContext';
 import Sidebar from './components/Sidebar';
 import PublicHeader from './components/PublicHeader';
 import PublicFooter from './components/PublicFooter';
+import RouteMetadata from './components/RouteMetadata';
 
 // Pages
 import Login from './pages/Login';
@@ -62,6 +63,7 @@ export default function App() {
     <AuthProvider>
       <CartProvider>
         <Router>
+          <RouteMetadata />
           <Routes>
             {/* Public Routes */}
             <Route element={<PublicLayout />}>

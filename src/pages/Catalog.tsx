@@ -14,8 +14,10 @@ import {
 import { Product } from '../types';
 import { useCart } from '../CartContext';
 import { resolveProductImage } from '../utils/productImages';
+import { resolveGroupName } from '../utils/groupMappings';
 
 const toText = (value: any) => (value === null || value === undefined ? '' : String(value).trim());
+
 const toNumber = (value: any, fallback = 0) => {
   if (value === null || value === undefined || value === '') return fallback;
   const parsed = Number(String(value).replace(',', '.').trim());
@@ -33,26 +35,39 @@ const readValue = (row: Record<string, any>, keys: string[]) => {
 
 const normalizeCatalogProduct = (row: Record<string, any>, index: number): Product => {
   const itemCode =
-    toText(readValue(row, ['codigoproduc', 'codigoproducto', 'codigo'])) ||
+    toText(readValue(row, ['prdu_cod_prdu', 'codigoproduc', 'codigoproducto', 'codigo', 'itemcode'])) ||
     `SIN-CODIGO-${index + 1}`;
 
   const codbarras =
-    toText(readValue(row, ['codbarras', 'codigo_barras', 'codbarra'])) ||
+    toText(readValue(row, ['prdu_cod_bars', 'codbarras', 'codigo_barras', 'codbarra'])) ||
     '9999999';
 
   const nombre =
-    toText(readValue(row, ['nombre', 'nombre_corto', 'nombrecorto', 'codigoproduc', 'codigoproducto'])) ||
+    toText(readValue(row, ['prdu_nom_prdu', 'prdu_des_prdu', 'nombre', 'nombre_corto', 'nombrecorto', 'codigoproduc', 'codigoproducto'])) ||
     itemCode;
 
-  const descripcion = toText(readValue(row, ['descripcion', 'detalle', 'nombre'])) || nombre;
-  const grupo = toText(readValue(row, ['grupo', 'categoria', 'categorianombre'])) || 'Sin grupo';
+  const descripcion = toText(readValue(row, ['prdu_des_prdu', 'descripcion', 'detalle', 'prdu_nom_prdu', 'nombre'])) || nombre;
+  const grupo = resolveGroupName(readValue(row, ['prdu_tip_grup', 'grupo', 'categoria', 'categorianombre'])) || 'Sin grupo';
   const precioBulto = toNumber(readValue(row, ['precio_bulto', 'preciobulto', 'bulto']), 0);
   const precioMayorista = toNumber(readValue(row, ['precio_mayorista', 'precio_mayor', 'preciomayor', 'mayorista', 'mayor']), 0);
-  const precioUnidad = toNumber(readValue(row, ['precio_unidad', 'preciounidad', 'unidad', 'precio']), 0);
+  const precioUnidad = toNumber(
+    readValue(row, [
+      'prdu_pre_untr',
+      'precio_unidad',
+      'preciounidad',
+      'unidad',
+      'precio',
+      'prdu_pre_euni',
+      'prdu_pre_myor',
+      'prdu_pre_trjc',
+      'prdu_pre_blto',
+    ]),
+    0
+  );
   const costo = toNumber(readValue(row, ['costo', 'cost']), 0);
-  const stock = toNumber(readValue(row, ['stock', 'cantidadstock', 'totalcantidad', 'total_cantidad']), 0);
-  const imageUrl = toText(readValue(row, ['imagen', 'foto', 'image_url', 'imageurl']));
-  const id = toNumber(readValue(row, ['id']), index + 1);
+  const stock = toNumber(readValue(row, ['prdu_stock', 'stock', 'cantidadstock', 'totalcantidad', 'total_cantidad']), 0);
+  const imageUrl = toText(readValue(row, ['prdu_rul_imag', 'imagen', 'foto', 'image_url', 'imageurl']));
+  const id = toNumber(readValue(row, ['prdu_cod_id', 'id']), index + 1);
 
   return {
     id,
@@ -91,11 +106,20 @@ const Catalog: React.FC = () => {
   const { addToCart } = useCart();
   const [addedId, setAddedId] = useState<number | null>(null);
 
+  const selectedGroupLabel = selectedGroup === 'all' ? 'Todos los grupos' : selectedGroup;
+
   const fetchProducts = async (reset: boolean) => {
     if (isLoading) return;
 
     setIsLoading(true);
     const pageOffset = reset ? 0 : nextOffset;
+
+    if (reset) {
+      setProducts([]);
+      setNextOffset(0);
+      setHasMore(false);
+      setTotalCount(0);
+    }
 
     try {
       const params = new URLSearchParams();
@@ -104,6 +128,9 @@ const Catalog: React.FC = () => {
       const trimmedSearch = search.trim();
       if (trimmedSearch) {
         params.set('q', trimmedSearch);
+      }
+      if (selectedGroup !== 'all') {
+        params.set('group', selectedGroup);
       }
 
       const response = await fetch(`/api/ecommerce/productos?${params.toString()}`);
@@ -148,7 +175,7 @@ const Catalog: React.FC = () => {
       const rows = Array.isArray(payload?.items) ? payload.items : [];
       const normalized = rows
         .map((row: any) => ({
-          value: toText(row?.grupo),
+          value: resolveGroupName(row?.grupo),
           total: toNumber(row?.total, 0),
         }))
         .filter((row: GroupOption) => row.value.length > 0);
@@ -163,22 +190,33 @@ const Catalog: React.FC = () => {
     const timer = setTimeout(() => {
       setVisibleCount(60);
       fetchProducts(true);
-      fetchGroups();
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, selectedGroup]);
+
+  useEffect(() => {
+    fetchGroups();
+  }, []);
 
   const groupsFallback = Array.from(
-    new Set<string>(products.map((p) => toText(p.grupo)).filter((group) => group.length > 0))
-  ).sort((a, b) => String(a).localeCompare(String(b)));
+    products.reduce((acc, product) => {
+      const group = toText(product.grupo);
+      if (!group) return acc;
+      acc.set(group, (acc.get(group) || 0) + 1);
+      return acc;
+    }, new Map<string, number>())
+  )
+    .map(([value, total]) => ({ value, total }))
+    .sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.value.localeCompare(b.value, 'es', { sensitivity: 'base' });
+    });
 
-  const groups = groupsFromDb.length > 0
-    ? groupsFromDb.map((group) => group.value)
-    : groupsFallback;
+  const groups = groupsFromDb.length > 0 ? groupsFromDb : groupsFallback;
 
   const filteredProducts = products.filter(p => {
-    const grupo = toText(p.grupo) || toText(p.category_name) || 'General';
+    const grupo = resolveGroupName(toText(p.grupo) || toText(p.category_name)) || 'General';
     const matchesGroup = selectedGroup === 'all' || grupo === selectedGroup;
     return matchesGroup;
   });
@@ -209,7 +247,7 @@ const Catalog: React.FC = () => {
       <div className="max-w-7xl mx-auto px-6 md:px-8 -mt-8 md:-mt-12 pb-12 md:pb-20">
         <div className="flex flex-col lg:flex-row gap-8 md:gap-12">
           {/* Sidebar Filters */}
-          <aside className="w-full lg:w-72 space-y-8 md:space-y-10">
+          <aside className="w-full lg:w-72 space-y-8 md:space-y-10 lg:sticky lg:top-6 self-start">
             <div className="bg-white border border-slate-100 p-6 md:p-8 rounded-[32px] md:rounded-[40px] shadow-xl space-y-8 md:space-y-10">
               {/* Search */}
               <div className="space-y-4">
@@ -228,21 +266,26 @@ const Catalog: React.FC = () => {
 
               {/* Groups */}
               <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupo</label>
-                <div className="flex flex-wrap lg:flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Grupo</label>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-china-red">{groups.length} grupos</span>
+                </div>
+                <div className="max-h-[55vh] overflow-y-auto pr-1 space-y-2 custom-scrollbar">
                   <button 
                     onClick={() => setSelectedGroup('all')}
-                    className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
+                    className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === 'all' ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
                   >
-                    Todos los grupos
+                    <span className="text-left">Todos los grupos</span>
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${selectedGroup === 'all' ? 'bg-white/15 text-white' : 'bg-white text-slate-500'}`}>{groups.reduce((sum, group) => sum + group.total, 0)}</span>
                   </button>
                   {groups.map(group => (
                     <button 
-                      key={group}
-                      onClick={() => setSelectedGroup(group)}
-                      className={`px-4 py-2.5 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === group ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 lg:bg-transparent'}`}
+                      key={group.value}
+                      onClick={() => setSelectedGroup(group.value)}
+                      className={`w-full flex items-center justify-between gap-3 px-4 py-3 rounded-xl text-xs md:text-sm font-bold transition-all ${selectedGroup === group.value ? 'bg-china-red text-white shadow-lg' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
                     >
-                      {group}
+                      <span className="text-left leading-tight">{group.value}</span>
+                      <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-black ${selectedGroup === group.value ? 'bg-white/15 text-white' : 'bg-white text-slate-500'}`}>{group.total}</span>
                     </button>
                   ))}
                 </div>
@@ -261,7 +304,10 @@ const Catalog: React.FC = () => {
           {/* Main Content */}
           <main className="flex-1 space-y-6 md:space-y-8">
             <div className="flex justify-between items-center bg-slate-50 p-3 md:p-4 rounded-2xl md:rounded-3xl">
-              <p className="text-xs md:text-sm font-bold text-slate-500 ml-2 md:ml-4">Mostrando <span className="text-slate-900">{visibleProducts.length}</span> de {totalCount || filteredProducts.length} productos</p>
+              <div className="ml-2 md:ml-4">
+                <p className="text-xs md:text-sm font-bold text-slate-500">Mostrando <span className="text-slate-900">{visibleProducts.length}</span> de {totalCount || filteredProducts.length} productos</p>
+                <p className="text-[10px] md:text-xs font-black uppercase tracking-widest text-slate-400 mt-1">{selectedGroupLabel}</p>
+              </div>
               <div className="flex gap-2">
                 <button className="p-2 bg-white rounded-xl shadow-sm text-china-red"><LayoutGrid size={18} md:size={20} /></button>
                 <button className="p-2 text-slate-400 hover:text-slate-600"><List size={18} md:size={20} /></button>
@@ -277,9 +323,7 @@ const Catalog: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 md:gap-8">
               {visibleProducts.map((product, idx) => (
                 (() => {
-                  const codigoBarras = toText(product.codbarras) || '9999999';
-                  const numeroArticulo = toText(product.internal_code) || codigoBarras;
-                  const descripcion = toText(product.descripcion) || toText(product.nombre) || numeroArticulo;
+                  const descripcion = toText(product.nombre) || toText(product.descripcion) || 'Producto sin nombre';
                   const precioUnidad = toNumber(product.precio_unidad, product.price);
 
                   return (
@@ -292,21 +336,16 @@ const Catalog: React.FC = () => {
                 >
                   <div className="relative aspect-square overflow-hidden bg-slate-100">
                     <img src={product.image_url} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-                    <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-full text-[9px] font-black text-china-red uppercase tracking-widest shadow-sm">
-                      {codigoBarras}
-                    </div>
                   </div>
                   <div className="p-6 md:p-8 flex-1 flex flex-col gap-4 md:gap-6">
                     <div className="space-y-1 md:space-y-2">
-                      <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">Nro Artículo: {numeroArticulo}</p>
                       <h3 className="font-black text-base md:text-lg text-slate-900 leading-tight uppercase tracking-tight group-hover:text-china-red transition-colors line-clamp-3">{descripcion}</h3>
-                      <p className="text-xs text-slate-500 font-semibold">Código de barras: {codigoBarras}</p>
                     </div>
                     
                     <div className="mt-auto space-y-4">
                       <div className="grid grid-cols-1 gap-3 text-xs">
                         <div>
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">ECUASOL P. UNITARIO</p>
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Precio Unitario</p>
                           <p className="font-black text-slate-900">${precioUnidad.toFixed(2)}</p>
                         </div>
                       </div>

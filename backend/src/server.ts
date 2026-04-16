@@ -5,6 +5,11 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import sql from "mssql";
 import { createHash, randomBytes } from "crypto";
+import { mkdirSync } from "fs";
+import { dirname, extname, resolve } from "path";
+import { fileURLToPath } from "url";
+import { getActiveSapQuery } from "./sap-query.js";
+import { getBackendGroupFilterValues, resolveBackendGroupName } from "./groupMappings.js";
 
 const sanitizeSqlIdentifier = (value: string, fallback: string) => {
   const clean = String(value || "").trim();
@@ -18,6 +23,8 @@ const ECOMMERCE_PRODUCTS_OBJECT = `${ECOMMERCE_PRODUCTS_SCHEMA}.${ECOMMERCE_PROD
 const ECOMMERCE_PRODUCTS_SQL = `[${ECOMMERCE_PRODUCTS_SCHEMA}].[${ECOMMERCE_PRODUCTS_TABLE}]`;
 const SAP_B1_SQL_FILTER = String(process.env.SAP_B1_SQL_FILTER || "").trim();
 const SAP_B1_SQL_TEXT = String(process.env.SAP_B1_SQL_TEXT || "").trim();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PRODUCT_IMAGES_DIR = resolve(__dirname, "../uploads/products");
 
 const db = new Database("sinostock.db");
 const sqlServerPort = Number(process.env.SQLSERVER_PORT || 0);
@@ -31,7 +38,7 @@ const sqlServerConfig: sql.config = {
   requestTimeout: Number(process.env.SQLSERVER_REQUEST_TIMEOUT_MS || "120000"),
   connectionTimeout: Number(process.env.SQLSERVER_CONNECTION_TIMEOUT_MS || "30000"),
   options: {
-    encrypt: false,
+    encrypt: String(process.env.SQLSERVER_ENCRYPT || "false").toLowerCase() === "true",
     trustServerCertificate: true,
     ...(Number.isFinite(sqlServerPort) && sqlServerPort > 0 ? {} : { instanceName: sqlServerInstance }),
   },
@@ -172,6 +179,16 @@ const toNumber = (value: any, fallback = 0): number => {
   const normalized = String(value).replace(",", ".").trim();
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const roundPrice = (value: number, decimals = 4): number => {
+  if (!Number.isFinite(value)) return 0;
+  return Number(value.toFixed(decimals));
+};
+
+const calculateUnitPriceFromCost = (cost: any): number => {
+  const normalizedCost = toNumber(cost, 0);
+  return roundPrice(normalizedCost * 1.15, 4);
 };
 
 const toText = (value: any): string => (value === null || value === undefined ? "" : String(value).trim());
@@ -1206,6 +1223,25 @@ async function startServer() {
 
   const app = express();
   const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024 } });
+  mkdirSync(PRODUCT_IMAGES_DIR, { recursive: true });
+  const imageUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, PRODUCT_IMAGES_DIR),
+      filename: (_req, file, cb) => {
+        const safeExt = extname(file.originalname || "").toLowerCase() || ".jpg";
+        const token = randomBytes(12).toString("hex");
+        cb(null, `prd-${Date.now()}-${token}${safeExt}`);
+      },
+    }),
+    limits: { fileSize: 8 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype && file.mimetype.toLowerCase().startsWith("image/")) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error("El archivo debe ser una imagen válida (jpg, png, webp, etc.)."));
+    },
+  });
   const getUploadedFile = (req: express.Request): Express.Multer.File | null => {
     const files = req.files as Express.Multer.File[] | undefined;
     if (files && files.length > 0) return files[0];
@@ -1213,6 +1249,7 @@ async function startServer() {
     return null;
   };
   app.use(express.json());
+  app.use("/uploads/products", express.static(PRODUCT_IMAGES_DIR));
   const PORT = Number(process.env.PORT) || 7002;
   const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:7000";
   const SAP_CONFIG = {
@@ -1244,11 +1281,155 @@ async function startServer() {
     b1ItemsFilter: process.env.SAP_B1_ITEMS_FILTER || "",
     b1TlsInsecure: process.env.SAP_B1_TLS_INSECURE === "true",
     b1SyncBatchSize: Number(process.env.SAP_B1_SYNC_BATCH_SIZE || "200"),
+    b1SqlSegments: ((process.env.SAP_B1_SQL_SEGMENTS ?? "").trim())
+      .split(",")
+      .map((value) => String(value).trim().toUpperCase())
+      .filter((value) => value.length > 0),
+    b1EnableSegmentFallback: process.env.SAP_B1_ENABLE_SEGMENT_FALLBACK !== "false",
   };
 
   if (SAP_CONFIG.b1TlsInsecure) {
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
   }
+
+  let sapItemGroupsCache: {
+    fetchedAt: number;
+    byCode: Map<string, string>;
+  } = {
+    fetchedAt: 0,
+    byCode: new Map<string, string>(),
+  };
+
+  const normalizeReferenceCode = (value: any) => {
+    const text = toText(value);
+    if (!text) return "";
+    if (/^\d+(\.0+)?$/.test(text)) {
+      return String(Number(text));
+    }
+    return text;
+  };
+
+  const getSapItemGroupsMap = async () => {
+    const cacheTtlMs = 10 * 60 * 1000;
+    if (Date.now() - sapItemGroupsCache.fetchedAt < cacheTtlMs && sapItemGroupsCache.byCode.size > 0) {
+      return sapItemGroupsCache.byCode;
+    }
+
+    if (!SAP_CONFIG.b1ServiceLayerUrl || !SAP_CONFIG.b1CompanyDb || !SAP_CONFIG.b1Username || !SAP_CONFIG.b1Password) {
+      return sapItemGroupsCache.byCode;
+    }
+
+    const serviceBase = SAP_CONFIG.b1ServiceLayerUrl.replace(/\/+$/, "");
+    const buildSapUrl = (path: string) => {
+      if (/^https?:\/\//i.test(path)) return path;
+
+      if (path.startsWith("/b1s/")) {
+        try {
+          const parsed = new URL(serviceBase);
+          return `${parsed.protocol}//${parsed.host}${path}`;
+        } catch {
+          return `${serviceBase}${path}`;
+        }
+      }
+
+      if (path.startsWith("/")) return `${serviceBase}${path}`;
+      return `${serviceBase}/${path}`;
+    };
+    const withTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await fetch(url, { ...init, signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+
+    try {
+      const loginResponse = await withTimeout(`${serviceBase}/Login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          CompanyDB: SAP_CONFIG.b1CompanyDb,
+          UserName: SAP_CONFIG.b1Username,
+          Password: SAP_CONFIG.b1Password,
+        }),
+      }, 15000);
+
+      const loginRaw = await loginResponse.text();
+      if (!loginResponse.ok) {
+        return sapItemGroupsCache.byCode;
+      }
+
+      const cookieHeader = ((loginResponse.headers.get("set-cookie") || "").split(";")[0] || "").trim();
+      if (!cookieHeader) {
+        return sapItemGroupsCache.byCode;
+      }
+
+      const map = new Map<string, string>();
+      let nextPath = "/ItemGroups";
+      let guard = 0;
+
+      while (nextPath && guard < 200) {
+        const groupsResponse = await withTimeout(buildSapUrl(nextPath), {
+          method: "GET",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+        }, 20000);
+
+        const groupsRaw = await groupsResponse.text();
+        if (!groupsResponse.ok) {
+          break;
+        }
+
+        let payload: any = null;
+        try {
+          payload = JSON.parse(groupsRaw);
+        } catch {
+          payload = null;
+        }
+
+        const rows = Array.isArray(payload?.value) ? payload.value : [];
+        for (const row of rows) {
+          const code = normalizeReferenceCode(row?.Number);
+          const name = toText(row?.GroupName);
+          if (code && name) {
+            map.set(code, name);
+          }
+        }
+
+        const nextLink = toText(payload?.["odata.nextLink"] || payload?.["@odata.nextLink"]);
+        nextPath = nextLink || "";
+        guard += 1;
+      }
+
+      sapItemGroupsCache = {
+        fetchedAt: Date.now(),
+        byCode: map,
+      };
+
+      try {
+        await withTimeout(`${serviceBase}/Logout`, {
+          method: "POST",
+          headers: {
+            Cookie: cookieHeader,
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        }, 8000);
+      } catch {
+        // noop
+      }
+    } catch {
+      // noop
+    }
+
+    return sapItemGroupsCache.byCode;
+  };
 
   const parseSapProductsFromPayload = (payload: any): Array<Record<string, any>> => {
     if (Array.isArray(payload)) return payload as Array<Record<string, any>>;
@@ -1276,6 +1457,8 @@ async function startServer() {
       toText(readSapValue(row, ["codigo", "code", "sku", "itemcode", "material", "codbarras", "codigoproducto"])) ||
       `SAP-AUTO-${Date.now()}-${index + 1}`;
 
+    const cost = toNumber(readSapValue(row, ["costo", "cost", "costo_unitario", "movingaverageprice", "avgstdprice"]), 0);
+
     const name =
       toText(readSapValue(row, ["nombre", "name", "description", "descripcion", "itemname"])) ||
       code;
@@ -1292,8 +1475,8 @@ async function startServer() {
         toText(readSapValue(row, ["descripcion", "description", "detalle", "nombre", "name"])) ||
         name,
       stock: toNumber(readSapValue(row, ["stock", "cantidad", "existencia", "quantity", "onhand"]), 0),
-      cost: toNumber(readSapValue(row, ["costo", "cost", "costo_unitario", "movingaverageprice", "avgstdprice"]), 0),
-      price: toNumber(readSapValue(row, ["precio", "price", "precio_unidad", "price_unit", "listprice", "pricevalue", "movingaverageprice"]), 0),
+      cost,
+      price: calculateUnitPriceFromCost(cost),
       priceMayorista: toNumber(readSapValue(row, ["precio_mayorista", "precio_por_mayor", "preciopormayor"]), 0),
       priceTarjeta: toNumber(readSapValue(row, ["precio_tarjeta"]), 0),
       priceBulto: toNumber(readSapValue(row, ["precio_bulto"]), 0),
@@ -1440,14 +1623,14 @@ async function startServer() {
     };
 
     await loadReferenceMap(
-      "/ItemGroups?$select=Number,GroupName",
+      "/ItemGroups",
       (row) => row?.Number,
       (row) => row?.GroupName,
       itemGroupNameByCode
     );
 
     await loadReferenceMap(
-      "/Warehouses?$select=WarehouseCode,WarehouseName",
+      "/Warehouses",
       (row) => row?.WarehouseCode,
       (row) => row?.WarehouseName,
       warehouseNameByCode
@@ -1492,7 +1675,8 @@ async function startServer() {
       await createSqlQuery();
 
       const resultRows: Array<Record<string, any>> = [];
-      const pageSize = 500;
+      const configuredPageSize = Number.isFinite(SAP_CONFIG.b1PageSize) ? SAP_CONFIG.b1PageSize : 20;
+      const pageSize = Math.max(20, Math.min(200, configuredPageSize || 20));
       let skip = 0;
       let guard = 0;
       let recoverableRetries = 0;
@@ -1517,9 +1701,12 @@ async function startServer() {
         if (!pageResponse.ok) {
           const lower = pageRaw.toLowerCase();
           const isRecoverable =
+            (pageResponse.status >= 500 && pageResponse.status <= 504) ||
             lower.includes("connection down") ||
             lower.includes("connection reset by peer") ||
-            lower.includes("system call 'recv' failed");
+            lower.includes("system call 'recv' failed") ||
+            lower.includes("proxy error") ||
+            lower.includes("error reading from remote server");
 
           if (isRecoverable && recoverableRetries < 3) {
             recoverableRetries += 1;
@@ -1578,69 +1765,75 @@ async function startServer() {
       return resultRows;
     };
 
-    const sqlCode = `COPILOT_SYNC_${Date.now()}`;
-    const defaultSqlText = `SELECT
-  CASE WHEN IFNULL(T0."CodeBars", '') = '' THEN '9999999' ELSE T0."CodeBars" END AS "prdu_cod_bars",
-  '${SAP_CONFIG.b1DefaultImage}' AS "prdu_rul_imag",
-  T0."ItemCode" AS "prdu_cod_prdu",
-  '${SAP_CONFIG.b1DefaultContainer}' AS "prdu_num_ctnd",
-  T0."ItemName" AS "prdu_nom_prdu",
-  T0."ItemName" AS "prdu_des_prdu",
-  T0."OnHand" AS "prdu_stock",
-  T0."AvgPrice" AS "prdu_costo",
-  IFNULL(P1."Price", 0) AS "prdu_pre_untr",
-  IFNULL(P2."Price", 0) AS "prdu_pre_myor",
-  IFNULL(P3."Price", 0) AS "prdu_pre_trjc",
-  IFNULL(P4."Price", 0) AS "prdu_pre_blto",
-  IFNULL(P5."Price", 0) AS "prdu_pre_difr",
-  IFNULL(P6."Price", 0) AS "prdu_pre_ofrt",
-  IFNULL(P7."Price", 0) AS "prdu_pre_espl",
-  IFNULL(P8."Price", 0) AS "prdu_pre_euni",
-  IFNULL(P9."Price", 0) AS "prdu_pre_emyr",
-  IFNULL(P10."Price", 0) AS "prdu_pre_eblt",
-  IFNULL(P11."Price", 0) AS "prdu_pre_etrj",
-  IFNULL(P12."Price", 0) AS "prdu_pre_edfr",
-  IFNULL(P13."Price", 0) AS "prdu_pre_eofr",
-  IFNULL(P14."Price", 0) AS "prdu_pre_luni",
-  IFNULL(P15."Price", 0) AS "prdu_pre_lmyr",
-  IFNULL(P16."Price", 0) AS "prdu_pre_lblt",
-  IFNULL(P17."Price", 0) AS "prdu_pre_ltrj",
-  IFNULL(P18."Price", 0) AS "prdu_pre_ldfr",
-  IFNULL(P19."Price", 0) AS "prdu_pre_lofr",
-  IFNULL(P20."Price", 0) AS "prdu_pre_chin",
-  (SELECT TOP 1 "CompnyName" FROM "OADM") AS "prdu_nom_empr",
-  T1."ItmsGrpNam" AS "prdu_tip_grup",
-  CASE WHEN T0."OnHand" > 0 THEN 1 ELSE 2 END AS "prdu_cod_estd",
-  T0."CreateDate" AS "prdu_fec_rgis"
-FROM "OITM" T0
-INNER JOIN "OITB" T1 ON T0."ItmsGrpCod" = T1."ItmsGrpCod"
-LEFT JOIN "ITM1" P1 ON T0."ItemCode" = P1."ItemCode" AND P1."PriceList" = 1
-LEFT JOIN "ITM1" P2 ON T0."ItemCode" = P2."ItemCode" AND P2."PriceList" = 2
-LEFT JOIN "ITM1" P3 ON T0."ItemCode" = P3."ItemCode" AND P3."PriceList" = 3
-LEFT JOIN "ITM1" P4 ON T0."ItemCode" = P4."ItemCode" AND P4."PriceList" = 4
-LEFT JOIN "ITM1" P5 ON T0."ItemCode" = P5."ItemCode" AND P5."PriceList" = 5
-LEFT JOIN "ITM1" P6 ON T0."ItemCode" = P6."ItemCode" AND P6."PriceList" = 6
-LEFT JOIN "ITM1" P7 ON T0."ItemCode" = P7."ItemCode" AND P7."PriceList" = 7
-LEFT JOIN "ITM1" P8 ON T0."ItemCode" = P8."ItemCode" AND P8."PriceList" = 8
-LEFT JOIN "ITM1" P9 ON T0."ItemCode" = P9."ItemCode" AND P9."PriceList" = 9
-LEFT JOIN "ITM1" P10 ON T0."ItemCode" = P10."ItemCode" AND P10."PriceList" = 10
-LEFT JOIN "ITM1" P11 ON T0."ItemCode" = P11."ItemCode" AND P11."PriceList" = 11
-LEFT JOIN "ITM1" P12 ON T0."ItemCode" = P12."ItemCode" AND P12."PriceList" = 12
-LEFT JOIN "ITM1" P13 ON T0."ItemCode" = P13."ItemCode" AND P13."PriceList" = 13
-LEFT JOIN "ITM1" P14 ON T0."ItemCode" = P14."ItemCode" AND P14."PriceList" = 14
-LEFT JOIN "ITM1" P15 ON T0."ItemCode" = P15."ItemCode" AND P15."PriceList" = 15
-LEFT JOIN "ITM1" P16 ON T0."ItemCode" = P16."ItemCode" AND P16."PriceList" = 16
-LEFT JOIN "ITM1" P17 ON T0."ItemCode" = P17."ItemCode" AND P17."PriceList" = 17
-LEFT JOIN "ITM1" P18 ON T0."ItemCode" = P18."ItemCode" AND P18."PriceList" = 18
-LEFT JOIN "ITM1" P19 ON T0."ItemCode" = P19."ItemCode" AND P19."PriceList" = 19
-LEFT JOIN "ITM1" P20 ON T0."ItemCode" = P20."ItemCode" AND P20."PriceList" = 20
-WHERE T0."SellItem" = 'Y'
-  AND T0."validFor" = 'Y'
-${SAP_B1_SQL_FILTER ? `  AND (${SAP_B1_SQL_FILTER})` : ""}
-ORDER BY T0."ItemCode"`;
-  const sqlText = SAP_B1_SQL_TEXT || defaultSqlText;
+    const defaultSegmentKeys = [
+      "__EMPTY__",
+      "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
+      "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M",
+      "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    ];
 
-    const queryRows = await executeSqlQuery(sqlCode, sqlText);
+    const detectSegmentCodeColumn = (baseSqlText: string) => {
+      const lower = String(baseSqlText || "").toLowerCase();
+      if (lower.includes('"codigoproduc"')) return 'CODIGOPRODUC';
+      if (lower.includes('"prdu_cod_prdu"')) return 'prdu_cod_prdu';
+      if (lower.includes('"itemcode"')) return 'ItemCode';
+      return 'prdu_cod_prdu';
+    };
+
+    const buildSegmentedSqlText = (baseSqlText: string, segment: string) => {
+      const codeColumn = detectSegmentCodeColumn(baseSqlText);
+      const firstCharExpr = `COALESCE(UPPER(SUBSTRING(Q."${codeColumn}", 1, 1)), '')`;
+      const condition =
+        segment === "__EMPTY__"
+          ? `${firstCharExpr} = ''`
+          : `${firstCharExpr} = '${segment.replace(/'/g, "''")}'`;
+
+      return `SELECT * FROM (${baseSqlText}) Q WHERE ${condition}`;
+    };
+
+    const executeSqlQueryWithFallback = async (sqlBaseCode: string, sqlBaseText: string) => {
+      try {
+        return await executeSqlQuery(sqlBaseCode, sqlBaseText);
+      } catch (error: any) {
+        const message = toText(error?.message || error).toLowerCase();
+        const isRecoverable =
+          message.includes("operation was aborted") ||
+          message.includes("proxy error") ||
+          message.includes("error reading from remote server") ||
+          message.includes("connection down") ||
+          message.includes("connection reset by peer") ||
+          message.includes("recv");
+
+        if (!SAP_CONFIG.b1EnableSegmentFallback || !isRecoverable) {
+          throw error;
+        }
+
+        const segments = SAP_CONFIG.b1SqlSegments.length > 0 ? SAP_CONFIG.b1SqlSegments : defaultSegmentKeys;
+        const segmentRows: Array<Record<string, any>> = [];
+
+        for (let index = 0; index < segments.length; index += 1) {
+          const segment = segments[index];
+          const segmentSqlText = buildSegmentedSqlText(sqlBaseText, segment);
+          const segmentCode = `${sqlBaseCode}_S${index + 1}_${segment}`;
+
+          updateSapSyncMonitor({
+            phase: "fetching_sap_segments",
+            totalFetched: segmentRows.length,
+          });
+
+          const rows = await executeSqlQuery(segmentCode, segmentSqlText);
+          segmentRows.push(...rows);
+        }
+
+        return segmentRows;
+      }
+    };
+
+    const sqlCode = `COPILOT_SYNC_${Date.now()}`;
+    const defaultSqlText = getActiveSapQuery(SAP_B1_SQL_FILTER || undefined);
+    const sqlText = SAP_B1_SQL_TEXT || defaultSqlText;
+
+    const queryRows = await executeSqlQueryWithFallback(sqlCode, sqlText);
     updateSapSyncMonitor({ phase: "fetching_sap_mapping", totalFetched: queryRows.length });
 
     for (const row of queryRows) {
@@ -1676,8 +1869,8 @@ ORDER BY T0."ItemCode"`;
       };
 
       const stock = toNumber(readSapValue(row, ["prdu_stock", "STOCK_TOTAL", "STOCK", "stock"]), 0);
-      const groupCode = toText(readSapValue(row, ["GRUPO", "grupo", "prdu_tip_grup", "ItmsGrpCod", "ITMSGRPCOD"]));
-      const warehouseCode = toText(readSapValue(row, ["EMPRESA", "empresa"]));
+      const groupCode = normalizeReferenceCode(readSapValue(row, ["GRUPO", "grupo", "prdu_tip_grup", "ItmsGrpCod", "ITMSGRPCOD"]));
+      const warehouseCode = normalizeReferenceCode(readSapValue(row, ["EMPRESA", "empresa"]));
       const itemName = toText(readSapValue(row, ["prdu_nom_prdu", "NOMBRE", "nombre"])) || code;
       const description = toText(readSapValue(row, ["prdu_des_prdu", "DESCRIPCION", "descripcion"])) || itemName;
       const rawGroupName = toText(readSapValue(row, ["prdu_tip_grup", "ItmsGrpNam", "ITMSGRPNAM", "GRUPO", "grupo"]));
@@ -1691,7 +1884,7 @@ ORDER BY T0."ItemCode"`;
       const fechaProceso = readSapValue(row, ["prdu_fec_rgis", "FECHA_DE_PROCESO", "fecha_de_proceso"]);
 
       const mappedGroupName = itemGroupNameByCode.get(groupCode) || "";
-      const groupLooksLikeCode = rawGroupName === groupCode || /^\d+$/.test(rawGroupName);
+      const groupLooksLikeCode = rawGroupName === groupCode || /^\d+(\.0+)?$/.test(rawGroupName);
       const normalizedGroupName =
         mappedGroupName && groupLooksLikeCode
           ? mappedGroupName
@@ -1704,6 +1897,8 @@ ORDER BY T0."ItemCode"`;
           ? mappedCompanyName
           : rawCompanyName || mappedCompanyName || warehouseCode || SAP_CONFIG.b1CompanyDb || "";
 
+      const costo = toNumber(readSapValue(row, ["prdu_costo", "COSTO", "costo"]), 0);
+
       allRows.push({
         codbarras: codBarras,
         codigoproduc: code,
@@ -1711,15 +1906,8 @@ ORDER BY T0."ItemCode"`;
         nombre: itemName,
         descripcion: description,
         stock,
-        costo: toNumber(readSapValue(row, ["prdu_costo", "COSTO", "costo"]), 0),
-        precio_unidad: sapPrice([
-          "prdu_pre_untr",
-          "PRECIO_UNITARIO",
-          "precio_unidad",
-          "prdu_pre_euni",
-          "ECUASOL_P_UNITARIO",
-          "ECUASOL P. UNITARIO",
-        ], 0),
+        costo,
+        precio_unidad: calculateUnitPriceFromCost(costo),
         precio_mayorista: sapPrice([
           "prdu_pre_myor",
           "PRECIO_POR_MAYOR",
@@ -1790,70 +1978,6 @@ ORDER BY T0."ItemCode"`;
       });
     }
 
-    const mergeSapRowsByCode = (rows: Array<Record<string, any>>) => {
-      const byCode = new Map<string, Record<string, any>>();
-      const numericFields = [
-        "stock",
-        "costo",
-        "precio_unidad",
-        "precio_mayorista",
-        "precio_tarjeta",
-        "precio_bulto",
-        "precio_diferenciado",
-        "precio_oferta",
-        "precio_especial",
-        "ecuasol_p_unitario",
-        "ecuasol_p_mayor",
-        "ecuasol_p_bulto",
-        "ecuasol_p_tarjeta",
-        "ecuasol_p_diferenciado",
-        "ecuasol_p_oferta",
-        "impolina_p_unitario",
-        "impolina_p_mayor",
-        "impolina_p_bulto",
-        "impolina_p_tarjeta",
-        "impolina_p_diferenciado",
-        "impolina_p_oferta",
-        "lista_china",
-      ];
-
-      for (const row of rows) {
-        const key = toText(row?.codigoproduc || row?.codigo || row?.codbarras).trim().toUpperCase();
-        if (!key) continue;
-
-        const current = byCode.get(key);
-        if (!current) {
-          byCode.set(key, { ...row });
-          continue;
-        }
-
-        for (const field of numericFields) {
-          const a = toNumber(current[field], 0);
-          const b = toNumber(row[field], 0);
-          if (b > a) {
-            current[field] = b;
-          }
-        }
-
-        const textFields = ["codbarras", "nombre", "descripcion", "contenedor", "empresa", "grupo", "imagen"];
-        for (const field of textFields) {
-          const a = toText(current[field]);
-          const b = toText(row[field]);
-          if (!a && b) {
-            current[field] = b;
-          }
-        }
-
-        if (!current.fecha_registro && row.fecha_registro) {
-          current.fecha_registro = row.fecha_registro;
-        }
-
-        byCode.set(key, current);
-      }
-
-      return Array.from(byCode.values());
-    };
-
     try {
       await fetchWithTimeout(`${serviceBase}/Logout`, {
         method: "POST",
@@ -1866,13 +1990,11 @@ ORDER BY T0."ItemCode"`;
       // Si logout falla no bloquea la sincronización.
     }
 
-    const mergedRows = mergeSapRowsByCode(allRows);
-
     return {
       sourceUrl: `${serviceBase}/Items`,
-      sapRows: mergedRows,
+      sapRows: allRows,
       rawSapRowCount: allRows.length,
-      uniqueSapRowCount: mergedRows.length,
+      uniqueSapRowCount: allRows.length,
     };
   };
 
@@ -2008,7 +2130,47 @@ ORDER BY T0."ItemCode"`;
 
         for (let batchIndex = 0; batchIndex < batchRows.length; batchIndex += 1) {
           const rowIndex = batchStart + batchIndex;
-          const normalized = normalizeSapProduct(batchRows[batchIndex], rowIndex);
+          const rawRow = batchRows[batchIndex] || {};
+          const normalizedCost = toNumber(rawRow["costo"] ?? rawRow["prdu_costo"], 0);
+          const normalized = mode === "sap_b1_service_layer"
+            ? {
+                code:
+                  toText(rawRow["codigoproduc"] || rawRow["codigo"] || rawRow["prdu_cod_prdu"]).trim() ||
+                  `SAP-AUTO-${Date.now()}-${rowIndex + 1}`,
+                barcode:
+                  toText(rawRow["codbarras"] || rawRow["prdu_cod_bars"]).trim() ||
+                  toText(rawRow["codigoproduc"] || rawRow["codigo"] || rawRow["prdu_cod_prdu"]).trim() ||
+                  `SAP-AUTO-${Date.now()}-${rowIndex + 1}`,
+                container:
+                  toText(rawRow["contenedor"] || rawRow["prdu_num_ctnd"]).trim() ||
+                  SAP_CONFIG.b1DefaultContainer,
+                company: toText(rawRow["empresa"] || rawRow["prdu_nom_empr"]).trim(),
+                name:
+                  toText(rawRow["nombre"] || rawRow["prdu_nom_prdu"]).trim() ||
+                  toText(rawRow["codigoproduc"] || rawRow["codigo"] || rawRow["prdu_cod_prdu"]).trim() ||
+                  `SAP-AUTO-${Date.now()}-${rowIndex + 1}`,
+                description:
+                  toText(rawRow["descripcion"] || rawRow["prdu_des_prdu"]).trim() ||
+                  toText(rawRow["nombre"] || rawRow["prdu_nom_prdu"]).trim() ||
+                  toText(rawRow["codigoproduc"] || rawRow["codigo"] || rawRow["prdu_cod_prdu"]).trim() ||
+                  `SAP-AUTO-${Date.now()}-${rowIndex + 1}`,
+                stock: toNumber(rawRow["stock"] ?? rawRow["prdu_stock"], 0),
+                cost: normalizedCost,
+                price: calculateUnitPriceFromCost(normalizedCost),
+                priceMayorista: toNumber(rawRow["precio_mayorista"] ?? rawRow["prdu_pre_myor"], 0),
+                priceTarjeta: toNumber(rawRow["precio_tarjeta"] ?? rawRow["prdu_pre_trjc"], 0),
+                priceBulto: toNumber(rawRow["precio_bulto"] ?? rawRow["prdu_pre_blto"], 0),
+                priceDiferenciado: toNumber(rawRow["precio_diferenciado"] ?? rawRow["prdu_pre_edfr"], 0),
+                priceOferta: toNumber(rawRow["precio_oferta"] ?? rawRow["prdu_pre_eofr"], 0),
+                priceEspecial: toNumber(rawRow["precio_especial"] ?? rawRow["prdu_pre_espl"], 0),
+                priceListaChina: toNumber(rawRow["lista_china"] ?? rawRow["prdu_pre_chin"], 0),
+                active: toNumber(rawRow["activo"] ?? rawRow["prdu_cod_estd"], 1),
+                category: toText(rawRow["grupo"] || rawRow["prdu_tip_grup"]).trim() || "General",
+                image:
+                  toText(rawRow["imagen"] || rawRow["prdu_rul_imag"]).trim() ||
+                  SAP_CONFIG.b1DefaultImage,
+              }
+            : normalizeSapProduct(rawRow, rowIndex);
 
           const valuesByColumn = new Map<string, any>();
 
@@ -2348,6 +2510,8 @@ ORDER BY T0."ItemCode"`;
       b1ItemsFilter: SAP_CONFIG.b1ItemsFilter || null,
       b1TlsInsecure: SAP_CONFIG.b1TlsInsecure,
       b1SyncBatchSize: SAP_CONFIG.b1SyncBatchSize,
+      b1SqlSegments: SAP_CONFIG.b1SqlSegments,
+      b1EnableSegmentFallback: SAP_CONFIG.b1EnableSegmentFallback,
       targetTable: ECOMMERCE_PRODUCTS_OBJECT,
       pollMinutes: SAP_CONFIG.pollMinutes,
     });
@@ -2379,6 +2543,7 @@ ORDER BY T0."ItemCode"`;
         starting: "Preparando sincronización.",
         fetching_sap: "Consultando SAP Service Layer (lectura de datos fuente).",
         fetching_sap_pages: "Leyendo paginas de SAP Service Layer.",
+        fetching_sap_segments: "Fallback activo: ejecutando segmentos de consulta SAP.",
         fetching_sap_mapping: "Normalizando columnas recibidas desde SAP.",
         truncate_target: "Limpiando tabla destino antes de la carga.",
         writing_sql: "Insertando/actualizando lotes en SQL Server.",
@@ -2521,6 +2686,7 @@ ORDER BY T0."ItemCode"`;
   app.get("/api/ecommerce/productos", async (req, res) => {
     try {
       const q = toText(req.query.q).trim();
+      const selectedGroup = toText(req.query.group).trim();
       const requestedLimit = Number(toText(req.query.limit) || "0");
       const requestedOffset = Number(toText(req.query.offset) || "0");
       const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(1000, requestedLimit) : 0;
@@ -2585,6 +2751,12 @@ ORDER BY T0."ItemCode"`;
         conditions.push(`(${searchColumns.map((column) => `[${column.name}] LIKE @search`).join(" OR ")})`);
       }
 
+      const selectedGroupValues = selectedGroup && grupoColumn ? getBackendGroupFilterValues(selectedGroup) : [];
+      if (selectedGroupValues.length > 0 && grupoColumn) {
+        const groupComparisons = selectedGroupValues.map((_, index) => `LTRIM(RTRIM(CONVERT(NVARCHAR(255), [${grupoColumn.name}]))) = @group${index}`);
+        conditions.push(`(${groupComparisons.join(" OR ")})`);
+      }
+
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
       const orderBy = idColumn ? `ORDER BY [${idColumn.name}] DESC` : "ORDER BY (SELECT NULL)";
 
@@ -2596,6 +2768,11 @@ ORDER BY T0."ItemCode"`;
           countRequest.input("search", `%${q}%`);
           listRequest.input("search", `%${q}%`);
         }
+
+        selectedGroupValues.forEach((value, index) => {
+          countRequest.input(`group${index}`, value);
+          listRequest.input(`group${index}`, value);
+        });
 
         listRequest.input("offset", offset);
         listRequest.input("limit", limit);
@@ -2619,6 +2796,10 @@ ORDER BY T0."ItemCode"`;
       if (q) {
         request.input("search", `%${q}%`);
       }
+
+      selectedGroupValues.forEach((value, index) => {
+        request.input(`group${index}`, value);
+      });
 
       const result = await request.query(`SELECT * FROM ${ECOMMERCE_PRODUCTS_SQL} ${whereClause} ${orderBy}`);
       res.json(result.recordset);
@@ -2655,14 +2836,94 @@ ORDER BY T0."ItemCode"`;
           CONVERT(NVARCHAR(255), [${grupoColumn.name}]);
       `);
 
+      const sapGroupsByCode = await getSapItemGroupsMap();
+      const aggregatedGroups = new Map<string, number>();
+
+      for (const row of result.recordset || []) {
+        const rawGroup = toText(row?.grupo);
+        const normalizedCode = normalizeReferenceCode(rawGroup);
+        const translatedGroup =
+          resolveBackendGroupName(sapGroupsByCode.get(normalizedCode) || rawGroup) ||
+          rawGroup;
+        const currentTotal = aggregatedGroups.get(translatedGroup) || 0;
+        aggregatedGroups.set(translatedGroup, currentTotal + toNumber(row?.total, 0));
+      }
+
       return res.json({
-        items: (result.recordset || []).map((row: any) => ({
-          grupo: toText(row?.grupo),
-          total: toNumber(row?.total, 0),
-        })),
+        items: Array.from(aggregatedGroups.entries())
+          .map(([grupo, total]) => ({ grupo, total }))
+          .sort((a, b) => {
+            if (b.total !== a.total) return b.total - a.total;
+            return a.grupo.localeCompare(b.grupo, "es", { sensitivity: "base" });
+          }),
       });
     } catch (e: any) {
       return res.status(500).json({ error: e?.message || "No se pudo consultar grupos." });
+    }
+  });
+
+  app.post("/api/ecommerce/productos/upload-image", imageUpload.single("image"), async (req, res) => {
+    try {
+      if (!sqlPool) {
+        return res.status(503).json({ error: "SQL Server no disponible para actualizar imagen." });
+      }
+
+      if (!imagenColumn) {
+        return res.status(400).json({ error: "No existe columna de imagen configurada en la tabla destino." });
+      }
+
+      const uploadedFile = req.file;
+      if (!uploadedFile) {
+        return res.status(400).json({ error: "Debes seleccionar una imagen para cargar." });
+      }
+
+      const codigoProducto = toText(req.body?.codigoProducto || req.body?.codigo || req.body?.codigoproduc);
+      const codigoBarras = toText(req.body?.codbarras || req.body?.codigoBarras);
+      const idText = toText(req.body?.id);
+      const idNumeric = Number(idText);
+      const hasNumericId = Number.isFinite(idNumeric) && idNumeric > 0;
+
+      const relativeImageUrl = `/uploads/products/${uploadedFile.filename}`;
+
+      const request = sqlPool.request();
+      request.input("imageUrl", relativeImageUrl);
+
+      let whereClause = "";
+      if (codigoProducto && codigoProductoColumn) {
+        request.input("codigoProducto", codigoProducto);
+        whereClause = `[${codigoProductoColumn.name}] = @codigoProducto`;
+      } else if (codigoBarras && codigoBarrasColumn) {
+        request.input("codigoBarras", codigoBarras);
+        whereClause = `[${codigoBarrasColumn.name}] = @codigoBarras`;
+      } else if (hasNumericId && idColumn) {
+        request.input("id", Math.trunc(idNumeric));
+        whereClause = `[${idColumn.name}] = @id`;
+      } else {
+        return res.status(400).json({
+          error: "Debes enviar codigoProducto, codbarras o id para ubicar el producto a actualizar.",
+        });
+      }
+
+      const result = await request.query(`
+        UPDATE ${ECOMMERCE_PRODUCTS_SQL}
+        SET [${imagenColumn.name}] = @imageUrl
+        WHERE ${whereClause};
+
+        SELECT @@ROWCOUNT AS affected;
+      `);
+
+      const affected = Number(result.recordset?.[0]?.affected || 0);
+      if (affected <= 0) {
+        return res.status(404).json({ error: "No se encontró producto para actualizar imagen con el identificador enviado." });
+      }
+
+      return res.json({
+        ok: true,
+        imageUrl: relativeImageUrl,
+        affected,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ error: e?.message || "No se pudo actualizar la imagen del producto." });
     }
   });
 
